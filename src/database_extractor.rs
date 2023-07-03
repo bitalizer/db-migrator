@@ -2,7 +2,7 @@ use crate::schema::ColumnSchema;
 use chrono::DateTime as ChronosDateTime;
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use hex::encode;
-use tiberius::time::{DateTime, DateTime2, DateTimeOffset, SmallDateTime, Time};
+use tiberius::time::{Date, DateTime, DateTime2, DateTimeOffset, SmallDateTime, Time};
 use tiberius::{Client, ColumnData, Row};
 use tokio::net::TcpStream;
 use tokio_util::compat::Compat;
@@ -147,6 +147,7 @@ impl DatabaseExtractor {
                 ColumnData::Numeric(val) => format_string_value(val),
                 ColumnData::String(val) => format_string_value(val),
                 ColumnData::Time(ref val) => format_time(val),
+                ColumnData::Date(ref val) => format_date(val),
                 ColumnData::SmallDateTime(ref val) => format_small_datetime(val),
                 ColumnData::DateTime(ref val) => format_datetime(val),
                 ColumnData::DateTime2(ref val) => format_datetime2(val),
@@ -188,6 +189,14 @@ fn format_time(val: &Option<Time>) -> String {
         let ns = time.increments() as i64 * 10i64.pow(9 - time.scale() as u32);
         let time = NaiveTime::from_hms_opt(0, 0, 0).unwrap() + Duration::nanoseconds(ns);
         format!("{}", time.format("'%H:%M:%S'"))
+    })
+    .unwrap_or_else(|| "NULL".to_string())
+}
+
+fn format_date(val: &Option<Date>) -> String {
+    val.map(|dt| {
+        let datetime = from_days(dt.days() as i64, 1);
+        datetime.format("'%Y-%m-%d").to_string()
     })
     .unwrap_or_else(|| "NULL".to_string())
 }
