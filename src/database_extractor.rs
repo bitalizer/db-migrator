@@ -141,17 +141,17 @@ impl DatabaseExtractor {
         let mut insert_queries = Vec::new();
 
         for row in rows {
-            //let insert_statement = generate_insert_statement(table_name, schema);
-            //let values_clause = generate_values_clause(row);
+            let insert_statement = Self::generate_insert_statement(table_name, schema);
+            let values_clause = Self::generate_values_clause(row);
 
-            //let full_query = format!("{} {}", insert_statement, values_clause);
-            //insert_queries.push(full_query);
+            let full_query = format!("{} {}", insert_statement, values_clause);
+            insert_queries.push(full_query);
         }
 
         insert_queries
     }
 
-    pub fn generate_insert_statement(table_name: &str, schema: &[ColumnSchema]) -> String {
+    fn generate_insert_statement(table_name: &str, schema: &[ColumnSchema]) -> String {
         let mut insert_query = format!("INSERT INTO `{}` (", table_name);
 
         for (i, column) in schema.iter().enumerate() {
@@ -167,7 +167,7 @@ impl DatabaseExtractor {
         insert_query
     }
 
-    pub fn generate_values_clause(row: Row) -> String {
+    fn generate_values_clause(row: Row) -> String {
         let mut values_query = "VALUES (".to_string();
         let mut first_value = true;
 
