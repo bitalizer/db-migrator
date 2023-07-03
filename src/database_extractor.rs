@@ -224,7 +224,7 @@ fn format_time(val: &Option<Time>) -> String {
     val.map(|time| {
         let ns = time.increments() as i64 * 10i64.pow(9 - time.scale() as u32);
         let time = NaiveTime::from_hms_opt(0, 0, 0).unwrap() + Duration::nanoseconds(ns);
-        format!("{}", time.format("%H:%M:%S"))
+        format!("{}", time.format("'%H:%M:%S'"))
     })
     .unwrap_or_else(|| "NULL".to_string())
 }
@@ -235,7 +235,7 @@ fn format_datetime(val: &Option<DateTime>) -> String {
             from_days(dt.days() as i64, 1900),
             from_sec_fragments(dt.seconds_fragments() as i64),
         );
-        datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+        datetime.format("'%Y-%m-%d %H:%M:%S'").to_string()
     })
     .unwrap_or_else(|| "NULL".to_string())
 }
@@ -249,7 +249,7 @@ fn format_datetime2(val: &Option<DateTime2>) -> String {
                     dt.time().increments() as i64 * 10i64.pow(9 - dt.time().scale() as u32),
                 ),
         );
-        datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+        datetime.format("'%Y-%m-%d %H:%M:%S'").to_string()
     })
     .unwrap_or_else(|| "NULL".to_string())
 }
@@ -260,7 +260,7 @@ fn format_small_datetime(val: &Option<SmallDateTime>) -> String {
             from_days(dt.days() as i64, 1900),
             from_mins(dt.seconds_fragments() as u32 * 60),
         );
-        datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+        datetime.format("'%Y-%m-%d %H:%M:%S'").to_string()
     })
     .unwrap_or_else(|| "NULL".to_string())
 }
@@ -272,11 +272,11 @@ fn format_datetime_offset(val: &Option<DateTimeOffset>) -> String {
             * 10i64.pow(9 - dto.datetime2().time().scale() as u32);
 
         let time = NaiveTime::from_hms_opt(0, 0, 0).unwrap() + Duration::nanoseconds(ns)
-            - chrono::Duration::minutes(dto.offset() as i64);
+            - Duration::minutes(dto.offset() as i64);
         let naive = NaiveDateTime::new(date, time);
 
         let dto: ChronoDateTime<Utc> = ChronoDateTime::from_utc(naive, Utc);
-        dto.format("%Y-%m-%d %H:%M:%S %z").to_string()
+        dto.format("'%Y-%m-%d %H:%M:%S %z'").to_string()
     })
     .unwrap_or_else(|| "NULL".to_string())
 }
