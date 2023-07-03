@@ -1,0 +1,17 @@
+[mssql_database]
+host = "localhost"
+port = 1433
+username = "db_user"
+password = "db_pass"
+database = "input"
+
+[mysql_database]
+host = "localhost"
+port = 3306
+username = "db_user"
+password = "db_pass"
+database = "output"
+
+[settings]
+collation = "Latin1_General_CI_AS"
+whitelisted_tables = ["table1", "table2"]
