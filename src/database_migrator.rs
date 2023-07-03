@@ -82,9 +82,9 @@ impl DatabaseMigrator {
             self.extractor
                 .generate_insert_queries(&table_name, rows, &table_schema);
 
-        for query in insert_queries {
-            println!("{}", query);
-        }
+        self.inserter
+            .execute_transactional_queries(&insert_queries)
+            .await?;
 
         Ok(())
     }
