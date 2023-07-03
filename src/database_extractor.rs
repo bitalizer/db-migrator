@@ -1,6 +1,7 @@
 use crate::schema::ColumnSchema;
 use chrono::DateTime as ChronosDateTime;
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use hex::encode;
 use tiberius::time::{DateTime, DateTime2, DateTimeOffset, SmallDateTime, Time};
 use tiberius::{Client, ColumnData, Row};
 use tokio::net::TcpStream;
@@ -134,7 +135,8 @@ impl DatabaseExtractor {
 
         for item in row.into_iter() {
             let output = match item {
-                ColumnData::Binary(_val) => "<binary data>".into(),
+                ColumnData::Binary(Some(val)) => format!("'0x{}'", encode(&val)),
+                ColumnData::Binary(None) => "NULL".to_string(),
                 ColumnData::Bit(val) => val.unwrap_or_default().to_string(),
                 ColumnData::I16(val) => format_numeric_value(val),
                 ColumnData::I32(val) => format_numeric_value(val),
