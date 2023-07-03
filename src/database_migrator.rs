@@ -2,6 +2,7 @@ use crate::config::SettingsConfig;
 use crate::database_extractor::DatabaseExtractor;
 use crate::database_inserter::DatabaseInserter;
 use crate::schema::ColumnSchema;
+use prettytable::{format, row, Table};
 use std::error::Error;
 
 pub struct DatabaseMigrator {
@@ -34,14 +35,14 @@ impl DatabaseMigrator {
         let mut tables = self.extractor.fetch_tables().await?;
 
         if tables.is_empty() {
-            return Err("No tables to process".into());
+            return Err("[-] No tables to process".into());
         }
 
         // Filter and keep only the whitelisted tables
         tables.retain(|table| self.settings.whitelisted_tables().contains(&table));
 
         if tables.is_empty() {
-            return Err("No tables to process after filtering whitelisted tables".into());
+            return Err("[-] No tables to process after filtering whitelisted tables".into());
         }
 
         println!("Tables to migrate: {}", tables.join(", "));
@@ -52,7 +53,7 @@ impl DatabaseMigrator {
             self.migrate_table(&table_name).await?;
         }
 
-        println!("Migration finished");
+        println!("[+] Migration finished");
 
         Ok(())
     }
@@ -62,7 +63,7 @@ impl DatabaseMigrator {
 
         // Fetch table schema
         let table_schema = self.extractor.get_table_schema(&table_name).await?;
-        println!("Table Schema:");
+
         Self::print_schema_info(&table_schema);
 
         self.inserter.create_table(&table_name).await?;
@@ -74,44 +75,36 @@ impl DatabaseMigrator {
         let insert_queries =
             self.extractor
                 .generate_insert_queries(&table_name, rows, &table_schema);
+
         for query in insert_queries {
             println!("{}", query);
         }
 
-        println!("---");
         Ok(())
     }
 
-    fn print_schema_info(table_schema: &Vec<ColumnSchema>) {
-        let output: Vec<String> = table_schema
-            .iter()
-            .map(|column| {
-                let mut column_info = vec![
-                    format!("Column Name: {}", column.column_name),
-                    format!("Data Type: {}", column.data_type),
-                ];
+    fn print_schema_info(table_schema: &[ColumnSchema]) {
+        let mut table = Table::new();
+        table.set_format(*format::consts::FORMAT_BORDERS_ONLY);
 
-                if let Some(character_maximum_length) = column.character_maximum_length {
-                    column_info.push(format!(
-                        "Character Maximum Length: {:?}",
-                        character_maximum_length
-                    ));
-                }
+        table.add_row(row![bFg => "Column Name", "Data Type", "Character Maximum Length", "Numeric Precision", "Numeric Scale"]);
 
-                if let Some(precision) = column.numeric_precision {
-                    column_info.push(format!("Numeric Precision: {:?}", precision));
-                }
+        for column in table_schema {
+            let character_maximum_length = column
+                .character_maximum_length
+                .map(|length| format!("{:?}", length));
+            let precision = column.numeric_precision.map(|p| format!("{:?}", p));
+            let scale = column.numeric_scale.map(|s| format!("{:?}", s));
 
-                if let Some(scale) = column.numeric_scale {
-                    column_info.push(format!("Numeric Scale: {:?}", scale));
-                }
+            table.add_row(row![
+                bFg => column.column_name,
+                column.data_type,
+                character_maximum_length.unwrap_or_else(|| "-".to_owned()),
+                precision.unwrap_or_else(|| "-".to_owned()),
+                scale.unwrap_or_else(|| "-".to_owned())
+            ]);
+        }
 
-                column_info.push("-------------------------".to_owned());
-
-                column_info.join("\n")
-            })
-            .collect();
-
-        println!("{}", output.join("\n"));
+        table.printstd();
     }
 }
