@@ -39,7 +39,7 @@ impl DatabaseMigrator {
         }
 
         // Filter and keep only the whitelisted tables
-        tables.retain(|table| self.settings.whitelisted_tables().contains(&table));
+        tables.retain(|table| self.settings.whitelisted_tables.contains(&table));
 
         if tables.is_empty() {
             return Err("[-] No tables to process after filtering whitelisted tables".into());
@@ -66,7 +66,13 @@ impl DatabaseMigrator {
 
         Self::print_schema_info(&table_schema);
 
-        self.inserter.create_table(&table_name).await?;
+        //Drop table in output database
+        self.inserter.drop_table(&table_name).await?;
+
+        //Create table in output database
+        self.inserter
+            .create_table(&table_name, &table_schema)
+            .await?;
 
         // Fetch rows from the table
         let rows = self.extractor.fetch_rows_from_table(&table_name).await?;

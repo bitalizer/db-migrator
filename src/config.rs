@@ -9,17 +9,17 @@ pub(crate) struct Config {
 
 #[derive(Debug, Clone)]
 pub struct DatabaseConfig {
-    host: String,
-    port: u16,
-    username: String,
-    password: String,
-    database: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: String,
+    pub database: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct SettingsConfig {
-    collation: String,
-    whitelisted_tables: Vec<String>,
+    pub collation: String,
+    pub whitelisted_tables: Vec<String>,
     // Add any other settings fields here
 }
 
@@ -61,39 +61,6 @@ impl Config {
 
     pub fn settings(&self) -> &SettingsConfig {
         &self.settings
-    }
-}
-
-impl DatabaseConfig {
-    pub fn host(&self) -> &str {
-        &self.host
-    }
-
-    pub fn port(&self) -> u16 {
-        self.port
-    }
-
-    pub fn username(&self) -> &str {
-        &self.username
-    }
-
-    pub fn password(&self) -> &str {
-        &self.password
-    }
-
-    pub fn database(&self) -> &str {
-        &self.database
-    }
-}
-
-impl SettingsConfig {
-    // Add any methods related to the settings configuration here
-    pub fn mssql_collation(&self) -> &str {
-        &self.collation
-    }
-
-    pub fn whitelisted_tables(&self) -> &[String] {
-        &self.whitelisted_tables
     }
 }
 

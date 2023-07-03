@@ -2,11 +2,13 @@ use std::fs;
 use toml::Value;
 
 use crate::config::Config;
+use crate::connection::{DatabaseConnectionFactory, SqlxMySqlConnection, TiberiusConnection};
 use crate::database_extractor::DatabaseExtractor;
 use crate::database_inserter::DatabaseInserter;
 use crate::database_migrator::DatabaseMigrator;
 
 mod config;
+mod connection;
 mod database_extractor;
 mod database_inserter;
 mod database_migrator;
@@ -19,14 +21,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Initializing connections...");
 
-    // Initialize connections
-    let mut extractor = DatabaseExtractor::new(config.mssql_database().clone());
-    let mut inserter = DatabaseInserter::new(config.mysql_database().clone());
+    // Create an instance of `DatabaseConnectionFactory` for `TiberiusConnection`
+    let tiberius_factory =
+        DatabaseConnectionFactory::<TiberiusConnection>::new(config.mssql_database().clone());
 
-    //Connect to databases
-    extractor.connect().await?;
-    inserter.connect().await?;
-    println!("Connections established");
+    // Create an instance of `DatabaseConnectionFactory` for `SqlxMySqlConnection`
+    let sqlx_factory =
+        DatabaseConnectionFactory::<SqlxMySqlConnection>::new(config.mysql_database().clone());
+
+    // Create the Tiberius connection using the factory
+    let tiberius_connection = tiberius_factory
+        .create_connection()
+        .await
+        .expect("Failed to create MSSQL connection");
+
+    // Create the SQLx MySQL connection using the factory
+    let sqlx_connection = sqlx_factory
+        .create_connection()
+        .await
+        .expect("Failed to create MySQL connection");
+
+    // Initialize connections
+    let extractor = DatabaseExtractor::new(tiberius_connection.client);
+    let inserter = DatabaseInserter::new(sqlx_connection.pool);
 
     // Run database migration
     let mut migrator = DatabaseMigrator::new(extractor, inserter, config.settings().clone());

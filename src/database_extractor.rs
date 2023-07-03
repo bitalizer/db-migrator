@@ -1,58 +1,23 @@
-use crate::config::DatabaseConfig;
 use crate::schema::ColumnSchema;
-use chrono::DateTime as ChronoDateTime;
+use chrono::DateTime as ChronosDateTime;
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use tiberius::time::{DateTime, DateTime2, DateTimeOffset, SmallDateTime, Time};
-use tiberius::{AuthMethod, Client, ColumnData, Config, EncryptionLevel, Row};
+use tiberius::{Client, ColumnData, Row};
 use tokio::net::TcpStream;
-use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
+use tokio_util::compat::Compat;
 
 pub struct DatabaseExtractor {
-    config: DatabaseConfig,
-    client: Option<Client<Compat<TcpStream>>>,
+    client: Client<Compat<TcpStream>>,
 }
 
 impl DatabaseExtractor {
-    pub fn new(config: DatabaseConfig) -> Self {
-        // Initialize the Tiberius client with the provided DatabaseConfig
-        DatabaseExtractor {
-            config,
-            client: None,
-        }
-    }
-
-    pub async fn connect(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Create a Tiberius Config based on the DatabaseConfig
-        let mut config = Config::new();
-        config.host(self.config.host());
-        config.port(self.config.port());
-        config.encryption(EncryptionLevel::NotSupported);
-        config.authentication(AuthMethod::sql_server(
-            self.config.username(),
-            self.config.password(),
-        ));
-        config.database(self.config.database());
-
-        let tcp = TcpStream::connect(config.get_addr())
-            .await
-            .map_err(|e| format!("Failed to connect to the MSSQL server: {}", e))?;
-        tcp.set_nodelay(true)?;
-
-        let client = Client::connect(config, tcp.compat_write())
-            .await
-            .map_err(|e| format!("Failed to connect to the MSSQL database: {}", e))?;
-
-        println!("Database Extractor has initialized");
-
-        self.client = Some(client); // Set the client field of DatabaseExtractor
-        Ok(())
+    pub fn new(client: Client<Compat<TcpStream>>) -> Self {
+        DatabaseExtractor { client }
     }
 
     pub async fn fetch_tables(&mut self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let rows = self
             .client
-            .as_mut()
-            .unwrap()
             .simple_query(
                 "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'",
             )
@@ -95,8 +60,6 @@ impl DatabaseExtractor {
 
         let rows = self
             .client
-            .as_mut()
-            .unwrap()
             .simple_query(query)
             .await?
             .into_first_result()
@@ -122,8 +85,6 @@ impl DatabaseExtractor {
     ) -> Result<Vec<Row>, Box<dyn std::error::Error>> {
         let rows = self
             .client
-            .as_mut()
-            .unwrap()
             .simple_query(format!("SELECT * FROM [{}]", table))
             .await?
             .into_first_result()
@@ -275,7 +236,7 @@ fn format_datetime_offset(val: &Option<DateTimeOffset>) -> String {
             - Duration::minutes(dto.offset() as i64);
         let naive = NaiveDateTime::new(date, time);
 
-        let dto: ChronoDateTime<Utc> = ChronoDateTime::from_utc(naive, Utc);
+        let dto: ChronosDateTime<Utc> = ChronosDateTime::from_utc(naive, Utc);
         dto.format("'%Y-%m-%d %H:%M:%S %z'").to_string()
     })
     .unwrap_or_else(|| "NULL".to_string())

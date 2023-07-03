@@ -1,46 +1,91 @@
-use crate::config::DatabaseConfig;
-use sqlx::mysql::MySqlPoolOptions;
+use crate::schema::ColumnSchema;
+
+use sqlx::Error;
 use sqlx::MySqlPool;
-use std::error::Error;
+use std::error::Error as StdError;
 
 pub struct DatabaseInserter {
-    config: DatabaseConfig,
-    client: Option<MySqlPool>,
+    pool: MySqlPool,
 }
 
 impl DatabaseInserter {
-    pub fn new(config: DatabaseConfig) -> Self {
-        DatabaseInserter {
-            config,
-            client: None,
-        }
+    pub fn new(pool: MySqlPool) -> Self {
+        DatabaseInserter { pool }
     }
 
-    pub async fn connect(&mut self) -> Result<(), Box<dyn Error>> {
-        let connection_string = format!(
-            "mysql://{}:{}@{}:{}/{}",
-            self.config.username(),
-            self.config.password(),
-            self.config.host(),
-            self.config.port(),
-            self.config.database()
+    pub async fn create_table(
+        &mut self,
+        table_name: &str,
+        schema: &[ColumnSchema],
+    ) -> Result<(), Error> {
+        println!("Creating table {}", table_name);
+        let mut create_table_query = format!("CREATE TABLE `{}` (", table_name);
+
+        for (i, column) in schema.iter().enumerate() {
+            if i > 0 {
+                create_table_query.push_str(", ");
+            }
+
+            let column_definition = match column.data_type.as_str().to_lowercase().as_str() {
+                "varchar" | "nvarchar" => {
+                    let column_length = column.character_maximum_length.unwrap_or(255);
+                    format!("{} varchar({})", column.column_name, column_length)
+                }
+                "ntext" => {
+                    format!("{} longtext", column.column_name)
+                }
+                "uniqueidentifier" => {
+                    format!("{} CHAR(36)", column.column_name)
+                }
+                "decimal" | "money" => {
+                    let decimal_precision = column.numeric_precision.unwrap_or(10);
+                    let decimal_scale = column.numeric_scale.unwrap_or(2);
+                    format!(
+                        "{} decimal({}, {})",
+                        column.column_name, decimal_precision, decimal_scale
+                    )
+                }
+                _ => format!("{} {}", column.column_name, column.data_type),
+            };
+
+            create_table_query.push_str(&column_definition);
+        }
+
+        create_table_query.push_str(")");
+
+        println!("\nQuery: {}\n", create_table_query);
+
+        sqlx::query(&create_table_query).execute(&self.pool).await?;
+
+        println!("[+] Table {} created successfully", table_name);
+
+        Ok(())
+    }
+
+    pub async fn drop_table(&mut self, table_name: &str) -> Result<(), Box<dyn StdError>> {
+        let table_exists = self.table_exists(table_name).await?;
+
+        if !table_exists {
+            return Ok(());
+        }
+
+        let drop_table_query = format!("DROP TABLE `{}`", table_name);
+
+        sqlx::query(&drop_table_query).execute(&self.pool).await?;
+
+        println!("[+] Table {} dropped successfully", table_name);
+
+        Ok(())
+    }
+
+    async fn table_exists(&mut self, table_name: &str) -> Result<bool, Box<dyn StdError>> {
+        let query = format!(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '{}'",
+            table_name
         );
 
-        let pool_result = MySqlPoolOptions::new()
-            .max_connections(3)
-            .connect(&connection_string)
-            .await
-            .map_err(|e| format!("Failed to connect to the MySQL database: {}", e))?;
+        let count: i64 = sqlx::query_scalar(&query).fetch_one(&self.pool).await?;
 
-        println!("Database Inserter has initialized");
-
-        self.client = Some(pool_result);
-        Ok(())
-    }
-
-    pub(crate) async fn create_table(&mut self, table_name: &str) -> Result<(), Box<dyn Error>> {
-        println!("Table {} created successfully", table_name);
-
-        Ok(())
+        Ok(count > 0)
     }
 }
