@@ -13,5 +13,6 @@ password = "db_pass"
 database = "output"
 
 [settings]
+format_column_name = true
 collation = "Latin1_General_CI_AS"
 whitelisted_tables = ["table1", "table2"]

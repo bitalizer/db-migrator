@@ -8,7 +8,8 @@ pub struct Mappings {
 #[derive(Debug)]
 pub struct Mapping {
     pub to_type: String,
-    pub numeric_precision: Option<u32>,
+    pub type_parameters: bool,
+    pub numeric_precision: Option<u8>,
     pub numeric_scale: Option<u32>,
     pub max_characters_length: Option<u32>,
 }
@@ -33,11 +34,15 @@ impl Mappings {
 
         for mapping_table in mappings_table {
             let mapping_table = mapping_table.as_table().ok_or("Invalid mapping format")?;
-            let name = mapping_table
-                .get("name")
+            let from_type = mapping_table
+                .get("from_type")
                 .and_then(|v| v.as_str())
-                .ok_or("Missing or invalid 'name' field")?
+                .ok_or("Missing or invalid 'from_type' field")?
                 .to_string();
+            let type_parameters = mapping_table
+                .get("type_parameters")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
             let to_type = mapping_table
                 .get("to_type")
                 .and_then(|v| v.as_str())
@@ -46,7 +51,7 @@ impl Mappings {
             let numeric_precision = mapping_table
                 .get("numeric_precision")
                 .and_then(|v| v.as_integer())
-                .map(|v| v as u32);
+                .map(|v| v as u8);
             let numeric_scale = mapping_table
                 .get("numeric_scale")
                 .and_then(|v| v.as_integer())
@@ -58,12 +63,13 @@ impl Mappings {
 
             let mapping = Mapping {
                 to_type,
+                type_parameters,
                 numeric_precision,
                 numeric_scale,
                 max_characters_length,
             };
 
-            mappings.insert(name, mapping);
+            mappings.insert(from_type, mapping);
         }
 
         Ok(Mappings { mappings })

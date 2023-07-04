@@ -91,6 +91,10 @@ impl DatabaseExtractor {
             .into_first_result()
             .await?;
 
+        if !rows.is_empty() {
+            println!("Fetched {} rows", rows.len());
+        }
+
         Ok(rows)
     }
 
@@ -110,6 +114,8 @@ impl DatabaseExtractor {
             insert_queries.push(full_query);
         }
 
+        println!("[+] Generated insert queries");
+
         insert_queries
     }
 
@@ -124,7 +130,7 @@ impl DatabaseExtractor {
             insert_query.push_str(&column.column_name);
         }
 
-        insert_query.push_str(")");
+        insert_query.push(')');
 
         insert_query
     }
@@ -154,7 +160,6 @@ impl DatabaseExtractor {
                 ColumnData::DateTimeOffset(ref val) => format_datetime_offset(val),
                 ColumnData::U8(val) => val.unwrap_or_default().to_string(),
                 ColumnData::Xml(val) => val.unwrap().as_ref().to_string(),
-                _ => "NULL".to_string(), // "NULL" for unsupported column types or None values
             };
 
             if !first_value {
@@ -164,14 +169,14 @@ impl DatabaseExtractor {
             first_value = false;
         }
 
-        values_query.push_str(")");
+        values_query.push(')');
         values_query
     }
 }
 
 fn format_string_value<T: ToString>(value: Option<T>) -> String {
     value
-        .map(|v| format!("'{}'", v.to_string().replace("'", "''")))
+        .map(|v| format!("'{}'", v.to_string().replace('\'', "''")))
         .unwrap_or_else(|| "NULL".to_string())
 }
 
@@ -196,7 +201,7 @@ fn format_time(val: &Option<Time>) -> String {
 fn format_date(val: &Option<Date>) -> String {
     val.map(|dt| {
         let datetime = from_days(dt.days() as i64, 1);
-        datetime.format("'%Y-%m-%d").to_string()
+        datetime.format("'%Y-%m-%d'").to_string()
     })
     .unwrap_or_else(|| "NULL".to_string())
 }
@@ -325,9 +330,6 @@ impl Column for String {
 
 impl Column for Option<String> {
     fn get(row: &Row, col_name: &str) -> Option<String> {
-        match row.get::<&str, _>(col_name) {
-            Some(data) => Some(data.to_string()),
-            None => None,
-        }
+        row.get::<&str, _>(col_name).map(|data| data.to_string())
     }
 }

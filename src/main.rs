@@ -49,10 +49,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize connections
     let extractor = DatabaseExtractor::new(tiberius_connection.client);
-    let inserter = DatabaseInserter::new(sqlx_connection.pool, mappings);
+    let inserter = DatabaseInserter::new(sqlx_connection.pool);
 
     // Run database migration
-    let mut migrator = DatabaseMigrator::new(extractor, inserter, config.settings().clone());
+    let mut migrator =
+        DatabaseMigrator::new(extractor, inserter, config.settings().clone(), mappings);
     migrator.run().await?;
     Ok(())
 }

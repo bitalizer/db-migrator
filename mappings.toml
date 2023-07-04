@@ -1,77 +1,111 @@
 [[mappings]]
-name = "bit"
+from_type = "bit"
 to_type = "tinyint"
+type_parameters = true
 numeric_precision = 1
 
 [[mappings]]
-name = "tinyint"
+from_type = "tinyint"
 to_type = "tinyint"
+type_parameters = true
 numeric_precision = 3
 
 [[mappings]]
-name = "smallint"
+from_type = "smallint"
 to_type = "smallint"
+type_parameters = true
 numeric_precision = 5
 
 [[mappings]]
-name = "int"
+from_type = "int"
 to_type = "int"
+type_parameters = true
 numeric_precision = 10
 
 [[mappings]]
-name = "bigint"
+from_type = "bigint"
 to_type = "bigint"
+type_parameters = true
 numeric_precision = 19
 
 [[mappings]]
-name = "nchar"
+from_type = "nchar"
 to_type = "char"
+type_parameters = true
 max_characters_length = 1
 
 [[mappings]]
-name = "varchar"
+from_type = "varchar"
 to_type = "varchar"
+type_parameters = true
 max_characters_length = 255
 
 [[mappings]]
-name = "nvarchar"
+from_type = "nvarchar"
 to_type = "longtext"
 
 [[mappings]]
-name = "text"
+from_type = "text"
 to_type = "text"
 
 [[mappings]]
-name = "ntext"
+from_type = "ntext"
 to_type = "longtext"
 
 [[mappings]]
-name = "uniqueidentifier"
+from_type = "uniqueidentifier"
 to_type = "char"
+type_parameters = true
 max_characters_length = 36
 
 [[mappings]]
-name = "decimal"
+from_type = "decimal"
 to_type = "decimal"
+type_parameters = true
 numeric_precision = 10
 numeric_scale = 2
 
 [[mappings]]
-name = "smallmoney"
+from_type = "numeric"
 to_type = "decimal"
+type_parameters = true
+numeric_precision = 18
+numeric_scale = 0
+
+[[mappings]]
+from_type = "smallmoney"
+to_type = "decimal"
+type_parameters = true
 numeric_precision = 10
 numeric_scale = 2
 
 [[mappings]]
-name = "money"
+from_type = "money"
 to_type = "decimal"
+type_parameters = true
 numeric_precision = 19
 numeric_scale = 4
 
 [[mappings]]
-name = "datetime"
+from_type = "timestamp"
+to_type = "timestamp"
+
+[[mappings]]
+from_type = "datetimeoffset"
 to_type = "datetime"
 
 [[mappings]]
-name = "datetime2"
+from_type = "date"
 to_type = "datetime"
+
+[[mappings]]
+from_type = "datetime"
+to_type = "datetime"
+
+[[mappings]]
+from_type = "datetime2"
+to_type = "datetime"
+
+[[mappings]]
+from_type = "binary"
+to_type = "binary"
