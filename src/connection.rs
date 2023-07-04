@@ -1,6 +1,6 @@
 use crate::config::DatabaseConfig;
 use async_trait::async_trait;
-use sqlx::mysql::{MySqlConnectOptions, MySqlPool};
+use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions};
 use std::error::Error;
 use tiberius::{AuthMethod, Client, Config, EncryptionLevel};
 use tokio::net::TcpStream;
@@ -44,7 +44,10 @@ impl DatabaseConnection for SqlxMySqlConnection {
             .password(&config.password)
             .database(&config.database);
 
-        let pool = MySqlPool::connect_with(options).await?;
+        let pool = MySqlPoolOptions::new()
+            .max_connections(4)
+            .connect_with(options)
+            .await?;
 
         Ok(SqlxMySqlConnection { pool })
     }
