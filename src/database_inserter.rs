@@ -2,6 +2,7 @@ use crate::schema::ColumnSchema;
 
 use sqlx::{Executor, MySqlPool};
 use std::error::Error;
+use tokio::time::Instant;
 
 pub struct DatabaseInserter {
     pool: MySqlPool,
@@ -20,7 +21,7 @@ impl DatabaseInserter {
         let create_table_query = &self.build_create_table_query(table_name, schema)?;
 
         println!(
-            "\nCreating table {}, Query: {}\n",
+            "\n[!] Creating table {}, query: \n      {}",
             table_name, create_table_query
         );
 
@@ -35,6 +36,7 @@ impl DatabaseInserter {
         &mut self,
         queries: &[String],
     ) -> Result<(), Box<dyn Error>> {
+        let start_time = Instant::now();
         let mut transaction = self.pool.begin().await?;
 
         for query in queries {
@@ -43,7 +45,12 @@ impl DatabaseInserter {
 
         transaction.commit().await?;
 
-        println!("[+] Executed {} transactional queries", queries.len());
+        let end_time = Instant::now();
+        println!(
+            "[+] Executed {} transactional queries, took: {}s",
+            queries.len(),
+            end_time.saturating_duration_since(start_time).as_secs_f32()
+        );
 
         Ok(())
     }

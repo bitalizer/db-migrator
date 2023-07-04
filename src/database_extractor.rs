@@ -5,6 +5,7 @@ use hex::encode;
 use tiberius::time::{Date, DateTime, DateTime2, DateTimeOffset, SmallDateTime, Time};
 use tiberius::{Client, ColumnData, Row};
 use tokio::net::TcpStream;
+use tokio::time::Instant;
 use tokio_util::compat::Compat;
 
 pub struct DatabaseExtractor {
@@ -82,17 +83,24 @@ impl DatabaseExtractor {
 
     pub async fn fetch_rows_from_table(
         &mut self,
-        table: &str,
+        table_name: &str,
     ) -> Result<Vec<Row>, Box<dyn std::error::Error>> {
+        let start_time = Instant::now();
+
         let rows = self
             .client
-            .simple_query(format!("SELECT * FROM [{}]", table))
+            .simple_query(format!("SELECT * FROM [{}]", table_name))
             .await?
             .into_first_result()
             .await?;
 
         if !rows.is_empty() {
-            println!("Fetched {} rows", rows.len());
+            let end_time = Instant::now();
+            println!(
+                "[+] Fetched {} rows, took: {}s",
+                rows.len(),
+                end_time.saturating_duration_since(start_time).as_secs_f32()
+            );
         }
 
         Ok(rows)
@@ -104,6 +112,7 @@ impl DatabaseExtractor {
         rows: Vec<Row>,
         schema: &[ColumnSchema],
     ) -> Vec<String> {
+        let start_time = Instant::now();
         let mut insert_queries = Vec::new();
 
         for row in rows {
@@ -114,7 +123,11 @@ impl DatabaseExtractor {
             insert_queries.push(full_query);
         }
 
-        println!("[+] Generated insert queries");
+        let end_time = Instant::now();
+        println!(
+            "[+] Generated insert queries, took: {}s",
+            end_time.saturating_duration_since(start_time).as_secs_f32()
+        );
 
         insert_queries
     }

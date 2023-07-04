@@ -5,6 +5,7 @@ use crate::mappings::Mappings;
 use crate::schema::ColumnSchema;
 use prettytable::{format, row, Table};
 use std::error::Error;
+use tokio::time::Instant;
 
 pub struct DatabaseMigrator {
     extractor: DatabaseExtractor,
@@ -53,7 +54,7 @@ impl DatabaseMigrator {
 
         // Process each table
         for table_name in &tables {
-            println!("-----------------------------------");
+            println!("--------------------------------------");
             self.migrate_table(&table_name).await?;
         }
 
@@ -63,7 +64,9 @@ impl DatabaseMigrator {
     }
 
     async fn migrate_table(&mut self, table_name: &&String) -> Result<(), Box<dyn Error>> {
-        println!("Migrating table: {}", table_name);
+        println!("[!] Migrating table: {}", table_name);
+
+        let start_time = Instant::now();
 
         // Fetch table schema
         let table_schema = self.extractor.get_table_schema(table_name).await?;
@@ -97,6 +100,13 @@ impl DatabaseMigrator {
                 .execute_transactional_queries(&insert_queries)
                 .await?;
         }
+
+        let end_time = Instant::now();
+        println!(
+            "[+] Table {} migrated, took: {}s",
+            table_name,
+            end_time.saturating_duration_since(start_time).as_secs_f32()
+        );
 
         Ok(())
     }
