@@ -1,0 +1,77 @@
+[[mappings]]
+name = "bit"
+to_type = "tinyint"
+numeric_precision = 1
+
+[[mappings]]
+name = "tinyint"
+to_type = "tinyint"
+numeric_precision = 3
+
+[[mappings]]
+name = "smallint"
+to_type = "smallint"
+numeric_precision = 5
+
+[[mappings]]
+name = "int"
+to_type = "int"
+numeric_precision = 10
+
+[[mappings]]
+name = "bigint"
+to_type = "bigint"
+numeric_precision = 19
+
+[[mappings]]
+name = "nchar"
+to_type = "char"
+max_characters_length = 1
+
+[[mappings]]
+name = "varchar"
+to_type = "varchar"
+max_characters_length = 255
+
+[[mappings]]
+name = "nvarchar"
+to_type = "longtext"
+
+[[mappings]]
+name = "text"
+to_type = "text"
+
+[[mappings]]
+name = "ntext"
+to_type = "longtext"
+
+[[mappings]]
+name = "uniqueidentifier"
+to_type = "char"
+max_characters_length = 36
+
+[[mappings]]
+name = "decimal"
+to_type = "decimal"
+numeric_precision = 10
+numeric_scale = 2
+
+[[mappings]]
+name = "smallmoney"
+to_type = "decimal"
+numeric_precision = 10
+numeric_scale = 2
+
+[[mappings]]
+name = "money"
+to_type = "decimal"
+numeric_precision = 19
+numeric_scale = 4
+
+[[mappings]]
+name = "datetime"
+to_type = "datetime"
+
+[[mappings]]
+name = "datetime2"
+to_type = "datetime"

@@ -1,15 +1,17 @@
 use crate::schema::ColumnSchema;
 
+use crate::mappings::Mappings;
 use sqlx::{Executor, MySqlPool};
 use std::error::Error;
 
 pub struct DatabaseInserter {
     pool: MySqlPool,
+    mappings: Mappings,
 }
 
 impl DatabaseInserter {
-    pub fn new(pool: MySqlPool) -> Self {
-        DatabaseInserter { pool }
+    pub fn new(pool: MySqlPool, mappings: Mappings) -> Self {
+        DatabaseInserter { pool, mappings }
     }
 
     pub async fn create_table(
@@ -91,7 +93,13 @@ impl DatabaseInserter {
                         }
                     }
                     "nvarchar" => {
-                        format!("{} longtext", column.column_name)
+                        let column_length = column.character_maximum_length.unwrap_or(255);
+
+                        if column_length > 65535 || column_length == -1 {
+                            format!("{} longtext", column.column_name)
+                        } else {
+                            format!("{} varchar({})", column.column_name, column_length)
+                        }
                     }
                     "text" => {
                         format!("{} text", column.column_name)
@@ -105,6 +113,14 @@ impl DatabaseInserter {
                     "decimal" => {
                         let decimal_precision = column.numeric_precision.unwrap_or(10);
                         let decimal_scale = column.numeric_scale.unwrap_or(2);
+                        format!(
+                            "{} decimal({}, {})",
+                            column.column_name, decimal_precision, decimal_scale
+                        )
+                    }
+                    "numeric" => {
+                        let decimal_precision = column.numeric_precision.unwrap_or(18);
+                        let decimal_scale = column.numeric_scale.unwrap_or(0);
                         format!(
                             "{} decimal({}, {})",
                             column.column_name, decimal_precision, decimal_scale
@@ -126,10 +142,16 @@ impl DatabaseInserter {
                             column.column_name, decimal_precision, decimal_scale
                         )
                     }
-                    "datetime" | "datetime2" => {
+                    "datetime" | "datetime2" | "timestamp" | "date" | "datetimeoffset" => {
                         format!("{} datetime", column.column_name)
                     }
-                    _ => format!("{} {}", column.column_name, column.data_type),
+                    "binary" => {
+                        format!("{} binary", column.column_name)
+                    }
+                    _ => {
+                        eprintln!("Unsupported data type: {}", column.data_type);
+                        format!("{} {}", column.column_name, column.data_type)
+                    } //_ => format!("{} {}", column.column_name, column.data_type),
                 };
 
                 if i > 0 {

@@ -6,18 +6,24 @@ use crate::connection::{DatabaseConnectionFactory, SqlxMySqlConnection, Tiberius
 use crate::database_extractor::DatabaseExtractor;
 use crate::database_inserter::DatabaseInserter;
 use crate::database_migrator::DatabaseMigrator;
+use crate::mappings::Mappings;
 
 mod config;
 mod connection;
 mod database_extractor;
 mod database_inserter;
 mod database_migrator;
+mod mappings;
 mod schema;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse config
     let config = load_config().expect("Failed to load config file");
+
+    let mappings = load_mappings().expect("Failed to load mappings file");
+
+    println!("Total mappings loaded: {}", mappings.len());
 
     println!("Initializing connections...");
 
@@ -43,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize connections
     let extractor = DatabaseExtractor::new(tiberius_connection.client);
-    let inserter = DatabaseInserter::new(sqlx_connection.pool);
+    let inserter = DatabaseInserter::new(sqlx_connection.pool, mappings);
 
     // Run database migration
     let mut migrator = DatabaseMigrator::new(extractor, inserter, config.settings().clone());
@@ -57,4 +63,12 @@ fn load_config() -> Result<Config, Box<dyn std::error::Error>> {
     let value = content.parse::<Value>()?;
     let config = Config::from_toml(value)?;
     Ok(config)
+}
+
+fn load_mappings() -> Result<Mappings, Box<dyn std::error::Error>> {
+    let mappings_file = "mappings.toml";
+    let content = fs::read_to_string(mappings_file)?;
+    let value = content.parse::<Value>()?;
+    let mappings = Mappings::from_toml(value)?;
+    Ok(mappings)
 }
