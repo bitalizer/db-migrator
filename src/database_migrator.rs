@@ -55,7 +55,7 @@ impl DatabaseMigrator {
         // Process each table
         for table_name in &tables {
             println!("--------------------------------------");
-            self.migrate_table(&table_name).await?;
+            self.migrate_table(table_name.clone()).await?;
         }
 
         println!("[+] Migration finished");
@@ -63,13 +63,19 @@ impl DatabaseMigrator {
         Ok(())
     }
 
-    async fn migrate_table(&mut self, table_name: &&String) -> Result<(), Box<dyn Error>> {
+    async fn migrate_table(&mut self, table_name: String) -> Result<(), Box<dyn Error>> {
         println!("[!] Migrating table: {}", table_name);
 
         let start_time = Instant::now();
 
         // Fetch table schema
-        let table_schema = self.extractor.get_table_schema(table_name).await?;
+        let table_schema = self.extractor.get_table_schema(&table_name).await?;
+
+        let output_table_name: String = if self.settings.format_snake_case {
+            Self::format_snake_case(&table_name)
+        } else {
+            table_name.clone()
+        };
 
         println!("Input schema");
         Self::print_schema_info(&table_schema);
@@ -80,21 +86,21 @@ impl DatabaseMigrator {
         Self::print_schema_info(&mapped_schema);
 
         //Drop table in output database
-        self.inserter.drop_table(table_name).await?;
+        self.inserter.drop_table(&output_table_name).await?;
 
         //Create table in output database
         self.inserter
-            .create_table(table_name, &mapped_schema)
+            .create_table(&output_table_name, &mapped_schema)
             .await?;
 
         // Fetch rows from the table
-        let rows = self.extractor.fetch_rows_from_table(table_name).await?;
+        let rows = self.extractor.fetch_rows_from_table(&table_name).await?;
 
         if !rows.is_empty() {
             // Generate and print INSERT queries
             let insert_queries =
                 self.extractor
-                    .generate_insert_queries(table_name, rows, &mapped_schema);
+                    .generate_insert_queries(&output_table_name, rows, &mapped_schema);
 
             self.inserter
                 .execute_transactional_queries(&insert_queries)
@@ -119,8 +125,8 @@ impl DatabaseMigrator {
                     panic!("Mapping not found for data type: {}", column.data_type)
                 });
 
-                let new_column_name = if self.settings.format_column_name {
-                    Self::format_column_name(&column.column_name)
+                let new_column_name = if self.settings.format_snake_case {
+                    Self::format_snake_case(&column.column_name)
                 } else {
                     column.column_name.clone()
                 };
@@ -172,7 +178,7 @@ impl DatabaseMigrator {
             .collect()
     }
 
-    fn format_column_name(column_name: &str) -> String {
+    fn format_snake_case(column_name: &String) -> String {
         let mut formatted_name = String::new();
 
         for (i, c) in column_name.chars().enumerate() {

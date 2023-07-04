@@ -18,10 +18,9 @@ pub struct DatabaseConfig {
 
 #[derive(Debug, Clone)]
 pub struct SettingsConfig {
-    pub format_column_name: bool,
+    pub format_snake_case: bool,
     pub collation: String,
     pub whitelisted_tables: Vec<String>,
-    // Add any other settings fields here
 }
 
 impl Config {
@@ -102,8 +101,8 @@ fn parse_database_config(config: Value) -> Result<DatabaseConfig, Box<dyn std::e
 }
 
 fn parse_settings_config(config: Value) -> Result<SettingsConfig, Box<dyn std::error::Error>> {
-    let format_column_name = config
-        .get("format_column_name")
+    let format_snake_case = config
+        .get("format_snake_case")
         .and_then(|value| value.as_bool())
         .unwrap_or(true);
 
@@ -122,7 +121,7 @@ fn parse_settings_config(config: Value) -> Result<SettingsConfig, Box<dyn std::e
         .collect::<Vec<String>>();
 
     Ok(SettingsConfig {
-        format_column_name,
+        format_snake_case,
         collation,
         whitelisted_tables,
     })
