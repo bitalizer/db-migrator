@@ -40,7 +40,13 @@ impl DatabaseInserter {
         let mut transaction = self.pool.begin().await?;
 
         for query in queries {
-            transaction.execute(query.as_str()).await?;
+            match transaction.execute(query.as_str()).await {
+                Ok(_) => continue,
+                Err(err) => {
+                    eprintln!("Error executing query: {}", query);
+                    eprintln!("Error details: {}", err);
+                }
+            }
         }
 
         transaction.commit().await?;
