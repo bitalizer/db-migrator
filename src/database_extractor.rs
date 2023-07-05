@@ -2,6 +2,7 @@ use crate::schema::ColumnSchema;
 use chrono::DateTime as ChronosDateTime;
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use hex::encode;
+use tiberius::numeric::Numeric;
 use tiberius::time::{Date, DateTime, DateTime2, DateTimeOffset, SmallDateTime, Time};
 use tiberius::{Client, ColumnData, Row};
 use tokio::net::TcpStream;
@@ -157,13 +158,13 @@ impl DatabaseExtractor {
                 ColumnData::Binary(Some(val)) => format!("'0x{}'", encode(&val)),
                 ColumnData::Binary(None) => "NULL".to_string(),
                 ColumnData::Bit(val) => val.unwrap_or_default().to_string(),
-                ColumnData::I16(val) => format_numeric_value(val),
-                ColumnData::I32(val) => format_numeric_value(val),
-                ColumnData::I64(val) => format_numeric_value(val),
+                ColumnData::I16(val) => format_number_value(val),
+                ColumnData::I32(val) => format_number_value(val),
+                ColumnData::I64(val) => format_number_value(val),
                 ColumnData::F32(val) => format_string_value(val),
                 ColumnData::F64(val) => format_string_value(val),
                 ColumnData::Guid(val) => format_string_value(val),
-                ColumnData::Numeric(val) => format_string_value(val),
+                ColumnData::Numeric(val) => format_numeric_value(val),
                 ColumnData::String(val) => format_string_value(val),
                 ColumnData::Time(ref val) => format_time(val),
                 ColumnData::Date(ref val) => format_date(val),
@@ -187,13 +188,28 @@ impl DatabaseExtractor {
     }
 }
 
+fn format_numeric_value(value: Option<Numeric>) -> String {
+    match value {
+        Some(numeric) => {
+            let int_part = numeric.int_part();
+            let dec_part = numeric.dec_part().abs();
+            let scale = numeric.scale() as usize;
+
+            let formatted_value = format!("{}.{:0<scale$}", int_part, dec_part, scale = scale);
+
+            format!("'{}'", formatted_value)
+        }
+        None => "NULL".to_string(),
+    }
+}
+
 fn format_string_value<T: ToString>(value: Option<T>) -> String {
     value
         .map(|v| format!("'{}'", v.to_string().replace('\'', "''")))
         .unwrap_or_else(|| "NULL".to_string())
 }
 
-fn format_numeric_value<T>(value: Option<T>) -> String
+fn format_number_value<T>(value: Option<T>) -> String
 where
     T: std::fmt::Display,
 {
