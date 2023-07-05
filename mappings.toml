@@ -66,6 +66,14 @@ numeric_precision = 10
 numeric_scale = 2
 
 [[mappings]]
+from_type = "float"
+to_type = "float"
+
+[[mappings]]
+from_type = "real"
+to_type = "real"
+
+[[mappings]]
 from_type = "numeric"
 to_type = "decimal"
 type_parameters = true
