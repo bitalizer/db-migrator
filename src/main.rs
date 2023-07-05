@@ -13,6 +13,7 @@ mod connection;
 mod database_extractor;
 mod database_inserter;
 mod database_migrator;
+mod helpers;
 mod mappings;
 mod schema;
 

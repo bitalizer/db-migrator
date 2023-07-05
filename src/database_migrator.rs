@@ -1,9 +1,9 @@
 use crate::config::SettingsConfig;
 use crate::database_extractor::DatabaseExtractor;
 use crate::database_inserter::DatabaseInserter;
+use crate::helpers::{format_snake_case, print_schema_info};
 use crate::mappings::Mappings;
 use crate::schema::ColumnSchema;
-use prettytable::{format, row, Table};
 use std::error::Error;
 use tokio::time::Instant;
 
@@ -72,18 +72,18 @@ impl DatabaseMigrator {
         let table_schema = self.extractor.get_table_schema(&table_name).await?;
 
         let output_table_name: String = if self.settings.format_snake_case {
-            Self::format_snake_case(&table_name)
+            format_snake_case(&table_name)
         } else {
             table_name.clone()
         };
 
         println!("Input schema");
-        Self::print_schema_info(&table_schema);
+        print_schema_info(&table_schema);
 
         let mapped_schema = self.map_table_schema(&table_schema);
 
         println!("Target schema");
-        Self::print_schema_info(&mapped_schema);
+        print_schema_info(&mapped_schema);
 
         //Drop table in output database
         self.inserter.drop_table(&output_table_name).await?;
@@ -126,7 +126,7 @@ impl DatabaseMigrator {
                 });
 
                 let new_column_name = if self.settings.format_snake_case {
-                    Self::format_snake_case(&column.column_name)
+                    format_snake_case(&column.column_name)
                 } else {
                     column.column_name.clone()
                 };
@@ -176,52 +176,5 @@ impl DatabaseMigrator {
                 }
             })
             .collect()
-    }
-
-    fn format_snake_case(column_name: &str) -> String {
-        let mut formatted_name = String::new();
-        let mut prev_char: Option<char> = None;
-
-        for c in column_name.chars() {
-            if c.is_uppercase() {
-                if let Some(prev) = prev_char {
-                    if !(prev == '_' || prev.is_uppercase()) {
-                        formatted_name.push('_');
-                    }
-                }
-                formatted_name.push(c.to_ascii_lowercase());
-            } else {
-                formatted_name.push(c);
-            }
-
-            prev_char = Some(c);
-        }
-
-        formatted_name
-    }
-
-    fn print_schema_info(table_schema: &[ColumnSchema]) {
-        let mut table = Table::new();
-        table.set_format(*format::consts::FORMAT_BORDERS_ONLY);
-
-        table.add_row(row![bFg => "Column Name", "Data Type", "Character Maximum Length", "Numeric Precision", "Numeric Scale"]);
-
-        for column in table_schema {
-            let character_maximum_length = column
-                .character_maximum_length
-                .map(|length| format!("{:?}", length));
-            let precision = column.numeric_precision.map(|p| format!("{:?}", p));
-            let scale = column.numeric_scale.map(|s| format!("{:?}", s));
-
-            table.add_row(row![
-                bFg => column.column_name,
-                column.data_type,
-                character_maximum_length.unwrap_or_else(|| "-".to_owned()),
-                precision.unwrap_or_else(|| "-".to_owned()),
-                scale.unwrap_or_else(|| "-".to_owned())
-            ]);
-        }
-
-        table.printstd();
     }
 }
