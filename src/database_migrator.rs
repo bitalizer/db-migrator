@@ -178,18 +178,23 @@ impl DatabaseMigrator {
             .collect()
     }
 
-    fn format_snake_case(column_name: &String) -> String {
+    fn format_snake_case(column_name: &str) -> String {
         let mut formatted_name = String::new();
+        let mut prev_char: Option<char> = None;
 
-        for (i, c) in column_name.chars().enumerate() {
+        for c in column_name.chars() {
             if c.is_uppercase() {
-                if i > 0 {
-                    formatted_name.push('_');
+                if let Some(prev) = prev_char {
+                    if !(prev == '_' || prev.is_uppercase()) {
+                        formatted_name.push('_');
+                    }
                 }
                 formatted_name.push(c.to_ascii_lowercase());
             } else {
                 formatted_name.push(c);
             }
+
+            prev_char = Some(c);
         }
 
         formatted_name
