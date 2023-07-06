@@ -13,6 +13,7 @@ password = "db_pass"
 database = "output"
 
 [settings]
+send_packet_mb = 1
 format_snake_case = false
 collation = "Latin1_General_CI_AS"
 whitelisted_tables = ["table1", "table2"]

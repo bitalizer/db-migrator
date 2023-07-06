@@ -2,7 +2,6 @@ use crate::schema::ColumnSchema;
 
 use sqlx::{Executor, MySqlPool};
 use std::error::Error;
-use tokio::time::Instant;
 
 pub struct DatabaseInserter {
     pool: MySqlPool,
@@ -21,42 +20,25 @@ impl DatabaseInserter {
         let create_table_query = &self.build_create_table_query(table_name, schema)?;
 
         println!(
-            "\n[!] Creating table {}, query: \n      {}",
+            "[!] Creating table {}, query: \n      {}",
             table_name, create_table_query
         );
 
         sqlx::query(create_table_query).execute(&self.pool).await?;
 
-        println!("[+] Table {} created successfully", table_name);
+        println!("\n[+] Table {} created successfully", table_name);
 
         Ok(())
     }
 
-    pub async fn execute_transactional_queries(
-        &mut self,
-        queries: &[String],
-    ) -> Result<(), Box<dyn Error>> {
-        let start_time = Instant::now();
+    pub async fn execute_transactional_query(&mut self, query: &str) -> Result<(), Box<dyn Error>> {
         let mut transaction = self.pool.begin().await?;
 
-        for query in queries {
-            match transaction.execute(query.as_str()).await {
-                Ok(_) => continue,
-                Err(err) => {
-                    eprintln!("Error executing query: {}", query);
-                    eprintln!("Error details: {}", err);
-                }
-            }
+        if let Err(err) = transaction.execute(query).await {
+            eprintln!("Error details: {}", err);
         }
 
         transaction.commit().await?;
-
-        let end_time = Instant::now();
-        println!(
-            "[+] Executed {} transactional queries, took: {}s",
-            queries.len(),
-            end_time.saturating_duration_since(start_time).as_secs_f32()
-        );
 
         Ok(())
     }
@@ -94,6 +76,14 @@ impl DatabaseInserter {
         Ok(create_table_query)
     }
 
+    pub async fn get_max_allowed_packet(&mut self) -> Result<usize, Box<dyn Error>> {
+        let query = "SELECT @@max_allowed_packet";
+
+        let max_allowed_packet: u32 = sqlx::query_scalar(query).fetch_one(&self.pool).await?;
+
+        Ok(max_allowed_packet as usize)
+    }
+
     pub async fn drop_table(&mut self, table_name: &str) -> Result<(), Box<dyn Error>> {
         let table_exists = self.table_exists(table_name).await?;
 
@@ -105,7 +95,7 @@ impl DatabaseInserter {
 
         sqlx::query(&drop_table_query).execute(&self.pool).await?;
 
-        println!("[+] Table {} dropped successfully", table_name);
+        println!("\n[+] Table {} dropped successfully", table_name);
 
         Ok(())
     }

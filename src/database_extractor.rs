@@ -1,12 +1,12 @@
 use crate::schema::ColumnSchema;
 use chrono::DateTime as ChronosDateTime;
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use futures::stream::{LocalBoxStream, StreamExt};
 use hex::encode;
 use tiberius::numeric::Numeric;
 use tiberius::time::{Date, DateTime, DateTime2, DateTimeOffset, SmallDateTime, Time};
 use tiberius::{Client, ColumnData, Row};
 use tokio::net::TcpStream;
-use tokio::time::Instant;
 use tokio_util::compat::Compat;
 
 pub struct DatabaseExtractor {
@@ -85,106 +85,45 @@ impl DatabaseExtractor {
     pub async fn fetch_rows_from_table(
         &mut self,
         table_name: &str,
-    ) -> Result<Vec<Row>, Box<dyn std::error::Error>> {
-        let start_time = Instant::now();
-
-        let rows = self
+    ) -> Result<LocalBoxStream<Result<Vec<String>, tiberius::error::Error>>, tiberius::error::Error>
+    {
+        let stream = self
             .client
             .simple_query(format!("SELECT * FROM [{}]", table_name))
             .await?
-            .into_first_result()
-            .await?;
+            .into_row_stream()
+            .map(|row| Ok(Self::format_row_values(row.unwrap()))) // Map each row to the formatted values
+            .boxed_local();
 
-        if !rows.is_empty() {
-            let end_time = Instant::now();
-            println!(
-                "[+] Fetched {} rows, took: {}s",
-                rows.len(),
-                end_time.saturating_duration_since(start_time).as_secs_f32()
-            );
-        }
-
-        Ok(rows)
+        Ok(stream)
     }
 
-    pub fn generate_insert_queries(
-        &mut self,
-        table_name: &str,
-        rows: Vec<Row>,
-        schema: &[ColumnSchema],
-    ) -> Vec<String> {
-        let start_time = Instant::now();
-        let mut insert_queries = Vec::new();
-
-        for row in rows {
-            let insert_statement = Self::generate_insert_statement(table_name, schema);
-            let values_clause = Self::generate_values_clause(row);
-
-            let full_query = format!("{} {}", insert_statement, values_clause);
-            insert_queries.push(full_query);
-        }
-
-        let end_time = Instant::now();
-        println!(
-            "[+] Generated insert queries, took: {}s",
-            end_time.saturating_duration_since(start_time).as_secs_f32()
-        );
-
-        insert_queries
+    fn format_row_values(row: Row) -> Vec<String> {
+        row.into_iter().map(Self::format_column_value).collect()
     }
 
-    fn generate_insert_statement(table_name: &str, schema: &[ColumnSchema]) -> String {
-        let mut insert_query = format!("INSERT INTO `{}` (", table_name);
-
-        for (i, column) in schema.iter().enumerate() {
-            if i > 0 {
-                insert_query.push_str(", ");
-            }
-
-            insert_query.push_str(&column.column_name);
+    fn format_column_value(item: ColumnData) -> String {
+        match item {
+            ColumnData::Binary(Some(val)) => format!("'0x{}'", encode(val)),
+            ColumnData::Binary(None) => "NULL".to_string(),
+            ColumnData::Bit(val) => val.unwrap_or_default().to_string(),
+            ColumnData::I16(val) => format_number_value(val),
+            ColumnData::I32(val) => format_number_value(val),
+            ColumnData::I64(val) => format_number_value(val),
+            ColumnData::F32(val) => format_string_value(val),
+            ColumnData::F64(val) => format_string_value(val),
+            ColumnData::Guid(val) => format_string_value(val),
+            ColumnData::Numeric(val) => format_numeric_value(val),
+            ColumnData::String(val) => format_string_value(val),
+            ColumnData::Time(ref val) => format_time(val),
+            ColumnData::Date(ref val) => format_date(val),
+            ColumnData::SmallDateTime(ref val) => format_small_datetime(val),
+            ColumnData::DateTime(ref val) => format_datetime(val),
+            ColumnData::DateTime2(ref val) => format_datetime2(val),
+            ColumnData::DateTimeOffset(ref val) => format_datetime_offset(val),
+            ColumnData::U8(val) => val.unwrap_or_default().to_string(),
+            ColumnData::Xml(val) => val.unwrap().as_ref().to_string(),
         }
-
-        insert_query.push(')');
-
-        insert_query
-    }
-
-    fn generate_values_clause(row: Row) -> String {
-        let mut values_query = "VALUES (".to_string();
-        let mut first_value = true;
-
-        for item in row.into_iter() {
-            let output = match item {
-                ColumnData::Binary(Some(val)) => format!("'0x{}'", encode(&val)),
-                ColumnData::Binary(None) => "NULL".to_string(),
-                ColumnData::Bit(val) => val.unwrap_or_default().to_string(),
-                ColumnData::I16(val) => format_number_value(val),
-                ColumnData::I32(val) => format_number_value(val),
-                ColumnData::I64(val) => format_number_value(val),
-                ColumnData::F32(val) => format_string_value(val),
-                ColumnData::F64(val) => format_string_value(val),
-                ColumnData::Guid(val) => format_string_value(val),
-                ColumnData::Numeric(val) => format_numeric_value(val),
-                ColumnData::String(val) => format_string_value(val),
-                ColumnData::Time(ref val) => format_time(val),
-                ColumnData::Date(ref val) => format_date(val),
-                ColumnData::SmallDateTime(ref val) => format_small_datetime(val),
-                ColumnData::DateTime(ref val) => format_datetime(val),
-                ColumnData::DateTime2(ref val) => format_datetime2(val),
-                ColumnData::DateTimeOffset(ref val) => format_datetime_offset(val),
-                ColumnData::U8(val) => val.unwrap_or_default().to_string(),
-                ColumnData::Xml(val) => val.unwrap().as_ref().to_string(),
-            };
-
-            if !first_value {
-                values_query.push_str(", ");
-            }
-            values_query.push_str(&output);
-            first_value = false;
-        }
-
-        values_query.push(')');
-        values_query
     }
 }
 

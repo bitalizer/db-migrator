@@ -18,6 +18,7 @@ pub struct DatabaseConfig {
 
 #[derive(Debug, Clone)]
 pub struct SettingsConfig {
+    pub send_packet_size: usize,
     pub format_snake_case: bool,
     pub collation: String,
     pub whitelisted_tables: Vec<String>,
@@ -101,6 +102,13 @@ fn parse_database_config(config: Value) -> Result<DatabaseConfig, Box<dyn std::e
 }
 
 fn parse_settings_config(config: Value) -> Result<SettingsConfig, Box<dyn std::error::Error>> {
+    let max_send_packet_bytes = config
+        .get("send_packet_mb")
+        .and_then(|v| v.as_integer().map(|v| v as usize))
+        .ok_or("Missing or invalid max send packet value")?
+        * 1024
+        * 1024;
+
     let format_snake_case = config
         .get("format_snake_case")
         .and_then(|value| value.as_bool())
@@ -121,6 +129,7 @@ fn parse_settings_config(config: Value) -> Result<SettingsConfig, Box<dyn std::e
         .collect::<Vec<String>>();
 
     Ok(SettingsConfig {
+        send_packet_size: max_send_packet_bytes,
         format_snake_case,
         collation,
         whitelisted_tables,
