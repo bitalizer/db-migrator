@@ -100,12 +100,11 @@ impl DatabaseMigrator {
         println!("\nTarget schema");
         print_schema_info(&mapped_schema);
 
-        // Drop table in the output database
-        self.inserter.drop_table(&output_table_name).await?;
+        // Create or truncate in the output database
+        let drop_table = self.settings.reset_tables;
 
-        // Create table in the output database
         self.inserter
-            .create_table(&output_table_name, &mapped_schema)
+            .create_or_truncate_table(&output_table_name, &mapped_schema, drop_table)
             .await?;
 
         // Migrate rows from the table

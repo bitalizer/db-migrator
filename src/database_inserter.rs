@@ -12,7 +12,28 @@ impl DatabaseInserter {
         DatabaseInserter { pool }
     }
 
-    pub async fn create_table(
+    pub(crate) async fn create_or_truncate_table(
+        &mut self,
+        table_name: &str,
+        schema: &[ColumnSchema],
+        drop: bool,
+    ) -> Result<(), Box<dyn Error>> {
+        if drop {
+            self.drop_table(table_name).await?;
+        }
+
+        let table_exists = self.table_exists(table_name).await?;
+
+        if table_exists {
+            self.truncate_table(table_name).await?;
+        } else {
+            self.create_table(table_name, schema).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn create_table(
         &mut self,
         table_name: &str,
         schema: &[ColumnSchema],
@@ -96,6 +117,16 @@ impl DatabaseInserter {
         sqlx::query(&drop_table_query).execute(&self.pool).await?;
 
         println!("\n[+] Table {} dropped successfully", table_name);
+
+        Ok(())
+    }
+
+    async fn truncate_table(&mut self, table_name: &str) -> Result<(), Box<dyn Error>> {
+        let drop_table_query = format!("TRUNCATE TABLE `{}`", table_name);
+
+        sqlx::query(&drop_table_query).execute(&self.pool).await?;
+
+        println!("\n[+] Table {} truncated successfully", table_name);
 
         Ok(())
     }

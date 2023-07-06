@@ -19,6 +19,7 @@ pub struct DatabaseConfig {
 #[derive(Debug, Clone)]
 pub struct SettingsConfig {
     pub send_packet_size: usize,
+    pub reset_tables: bool,
     pub format_snake_case: bool,
     pub collation: String,
     pub whitelisted_tables: Vec<String>,
@@ -109,6 +110,11 @@ fn parse_settings_config(config: Value) -> Result<SettingsConfig, Box<dyn std::e
         * 1024
         * 1024;
 
+    let reset_tables = config
+        .get("reset_tables")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+
     let format_snake_case = config
         .get("format_snake_case")
         .and_then(|value| value.as_bool())
@@ -130,6 +136,7 @@ fn parse_settings_config(config: Value) -> Result<SettingsConfig, Box<dyn std::e
 
     Ok(SettingsConfig {
         send_packet_size: max_send_packet_bytes,
+        reset_tables,
         format_snake_case,
         collation,
         whitelisted_tables,
