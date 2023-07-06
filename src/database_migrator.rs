@@ -59,7 +59,7 @@ impl DatabaseMigrator {
         }
 
         // Filter and keep only the whitelisted tables
-        tables.retain(|table| self.settings.whitelisted_tables.contains(&table));
+        tables.retain(|table| self.settings.whitelisted_tables.contains(table));
 
         if tables.is_empty() {
             return Err("[-] No tables to process after filtering whitelisted tables".into());
@@ -67,13 +67,20 @@ impl DatabaseMigrator {
 
         println!("Tables to migrate: {}", tables.join(", "));
 
+        let start_time = Instant::now();
+
         // Process each table
         for table_name in &tables {
             println!("--------------------------------------");
             self.migrate_table(table_name.clone()).await?;
         }
 
-        println!("[+] Migration finished");
+        let end_time = Instant::now();
+
+        println!(
+            "[+] Migration finished, total time took: {}s",
+            end_time.saturating_duration_since(start_time).as_secs_f32()
+        );
 
         Ok(())
     }
