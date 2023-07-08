@@ -4,8 +4,11 @@ use crate::database_inserter::DatabaseInserter;
 use crate::helpers::{format_snake_case, print_schema_info};
 use crate::mappings::Mappings;
 use crate::schema::ColumnSchema;
+use anyhow::{bail, Context, Result};
 use futures::TryStreamExt;
-use std::error::Error;
+use log::info;
+use std::sync::Arc;
+use tokio::spawn;
 use tokio::time::Instant;
 
 pub struct DatabaseMigrator {
@@ -30,63 +33,55 @@ impl DatabaseMigrator {
         }
     }
 
-    pub async fn run(&mut self) -> Result<(), Box<dyn Error>> {
-        println!("Running table migrator");
+    pub async fn run(&mut self) -> Result<()> {
+        info!("Running table migrator");
 
         let config_send_packet_size = self.settings.send_packet_size;
         let max_allowed_packet = self.inserter.get_max_allowed_packet().await?;
 
-        println!(
-            "[!] Max allowed packet size - Current: {} MB | Maximum {} MB",
-            config_send_packet_size as f64 / 1_048_576.0,
-            max_allowed_packet as f64 / 1_048_576.0
-        );
-
-        if config_send_packet_size > max_allowed_packet {
-            return Err("Configured send packet size exceeds maximum allowed packet size".into());
-        }
+        check_packet_size(config_send_packet_size, max_allowed_packet).await?;
 
         self.migrate_tables().await?;
         Ok(())
     }
 
-    async fn migrate_tables(&mut self) -> Result<(), Box<dyn Error>> {
+    async fn migrate_tables(&mut self) -> Result<()> {
         // Fetch all tables from the database
         let mut tables = self.extractor.fetch_tables().await?;
 
         if tables.is_empty() {
-            return Err("[-] No tables to process".into());
+            bail!("No tables to process");
+            //return Err("[-] No tables to process".into());
         }
 
         // Filter and keep only the whitelisted tables
         tables.retain(|table| self.settings.whitelisted_tables.contains(table));
 
         if tables.is_empty() {
-            return Err("[-] No tables to process after filtering whitelisted tables".into());
+            bail!("No tables to process after filtering whitelisted tables");
         }
 
-        println!("Tables to migrate: {}", tables.join(", "));
+        info!("Tables to migrate: {}", tables.join(", "));
 
         let start_time = Instant::now();
 
         // Process each table
         for table_name in &tables {
-            println!("--------------------------------------");
             self.migrate_table(table_name.clone()).await?;
         }
 
         let end_time = Instant::now();
 
-        println!(
-            "[+] Migration finished, total time took: {}s",
+        info!(
+            "Migration finished, total time took: {}s",
             end_time.saturating_duration_since(start_time).as_secs_f32()
         );
 
         Ok(())
     }
 
-    async fn migrate_table(&mut self, table_name: String) -> Result<(), Box<dyn Error>> {
-        println!("[!] Migrating table: {}", table_name);
+    async fn migrate_table(&mut self, table_name: String) -> Result<()> {
+        info!("Migrating table: {}", table_name);
 
         let start_time = Instant::now();
 
@@ -99,13 +94,13 @@ impl DatabaseMigrator {
             table_name.clone()
         };
 
-        println!("\nInput schema");
-        print_schema_info(&table_schema);
+        /*println!("\nInput schema");
+        print_schema_info(&table_schema);*/
 
         let mapped_schema = self.map_table_schema(&table_schema);
 
-        println!("\nTarget schema");
-        print_schema_info(&mapped_schema);
+        /*println!("\nTarget schema");
+        print_schema_info(&mapped_schema);*/
 
         // Create or truncate in the output database
         let drop_table = self.settings.reset_tables;
@@ -119,8 +114,8 @@ impl DatabaseMigrator {
             .await?;
 
         let end_time = Instant::now();
-        println!(
-            "[+] Table {} migrated, took: {}s",
+        info!(
+            "Table {} migrated, took: {}s",
             table_name,
             end_time.saturating_duration_since(start_time).as_secs_f32()
         );
@@ -133,12 +128,14 @@ impl DatabaseMigrator {
         input_table: &str,
         output_table: &str,
         mapped_schema: &[ColumnSchema],
-    ) -> Result<(), Box<dyn Error>> {
-        println!("[!] Migrating rows");
+    ) -> Result<()> {
+        info!("Migrating {} rows", output_table);
+
         let max_send_packet_bytes: usize = self.settings.send_packet_size;
 
         let insert_statement = Self::generate_insert_statement(output_table, mapped_schema);
         let mut rows_stream = self.extractor.fetch_rows_from_table(input_table).await?;
+
         let mut insert_query = String::with_capacity(max_send_packet_bytes);
         let mut total_bytes = insert_statement.len();
         let mut transaction_count = 0;
@@ -149,15 +146,17 @@ impl DatabaseMigrator {
             let value_set_bytes = value_set.len();
 
             if total_bytes + value_set_bytes > max_send_packet_bytes {
-                Self::execute_batch(&mut self.inserter, &insert_query, transaction_count).await?;
+                Self::execute_batch(self.inserter.clone(), &insert_query, transaction_count)
+                    .await?;
+
                 insert_query.clear();
                 total_bytes = insert_statement.len();
                 transaction_count = 0;
             }
 
             if !insert_query.is_empty() {
-                insert_query.push_str(", ");
-                total_bytes += 2;
+                insert_query.push(',');
+                total_bytes += 1;
             }
 
             if transaction_count == 0 {
@@ -169,27 +168,49 @@ impl DatabaseMigrator {
             transaction_count += 1;
         }
 
-        Self::execute_batch(&mut self.inserter, &insert_query, transaction_count).await?;
+        Self::execute_batch(self.inserter.clone(), &insert_query, transaction_count).await?;
 
         Ok(())
     }
 
     async fn execute_batch(
-        inserter: &mut DatabaseInserter,
-        insert_query: &str,
+        mut inserter: DatabaseInserter,
+        insert_query: &String,
         transaction_count: usize,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<()> {
         if !insert_query.is_empty() {
-            let start_time = Instant::now();
-            inserter.execute_transactional_query(insert_query).await?;
-            let end_time = Instant::now();
+            let cloned_insert_query = Arc::new(insert_query.clone());
 
-            println!(
-                "[!] Executed batch with {} transactions, took: {}s",
-                transaction_count,
-                end_time.saturating_duration_since(start_time).as_secs_f32()
+            let start_time = Instant::now();
+
+            let query_str = cloned_insert_query.as_str();
+            info!(
+                "Sending {} bytes batch with {} transactions",
+                query_str.len(),
+                transaction_count
             );
+
+            let execution_result = inserter
+                .execute_transactional_query(query_str)
+                .await
+                .context("Transaction execution");
+
+            match execution_result {
+                Ok(_) => {
+                    let end_time = Instant::now();
+                    info!(
+                        "Executed batch with {} transactions, bytes: {}, took: {}s",
+                        transaction_count,
+                        query_str.len(),
+                        end_time.saturating_duration_since(start_time).as_secs_f32()
+                    );
+                }
+                Err(err) => {
+                    error!("Transaction execution failed: {}", err);
+                }
+            }
         }
+
         Ok(())
     }
 
@@ -266,4 +287,21 @@ impl DatabaseMigrator {
             })
             .collect()
     }
+}
+
+async fn check_packet_size(
+    config_send_packet_size: usize,
+    max_allowed_packet: usize,
+) -> Result<()> {
+    info!(
+        "Max allowed packet size - Current: {} MB | Maximum {} MB",
+        config_send_packet_size as f64 / 1_048_576.0,
+        max_allowed_packet as f64 / 1_048_576.0
+    );
+
+    if config_send_packet_size > max_allowed_packet {
+        bail!("Configured send packet size exceeds maximum allowed packet size")
+    }
+
+    Ok(())
 }

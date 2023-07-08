@@ -1,4 +1,5 @@
 use crate::schema::ColumnSchema;
+use anyhow::{anyhow, Result};
 use chrono::DateTime as ChronosDateTime;
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use futures::stream::{LocalBoxStream, StreamExt};
@@ -18,7 +19,7 @@ impl DatabaseExtractor {
         DatabaseExtractor { client }
     }
 
-    pub async fn fetch_tables(&mut self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    pub async fn fetch_tables(&mut self) -> Result<Vec<String>> {
         let rows = self
             .client
             .simple_query(
@@ -35,9 +36,7 @@ impl DatabaseExtractor {
                 let table_name: Option<&str> = row.get(0);
                 match table_name {
                     Some(name) => Ok(name.to_owned()),
-                    None => Err(Box::<dyn std::error::Error>::from(
-                        "Failed to retrieve table name",
-                    )),
+                    None => Err(anyhow!("Failed to retrieve table name")),
                 }
             })
             .collect::<Result<Vec<String>, _>>()?;
@@ -45,10 +44,7 @@ impl DatabaseExtractor {
         Ok(tables)
     }
 
-    pub async fn get_table_schema(
-        &mut self,
-        table: &str,
-    ) -> Result<Vec<ColumnSchema>, Box<dyn std::error::Error>> {
+    pub async fn get_table_schema(&mut self, table: &str) -> Result<Vec<ColumnSchema>> {
         let query = format!(
             "SELECT
             COLUMN_NAME,

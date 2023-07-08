@@ -1,7 +1,7 @@
 use crate::config::DatabaseConfig;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions};
-use std::error::Error;
 use tiberius::{AuthMethod, Client, Config, EncryptionLevel};
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
@@ -16,19 +16,23 @@ pub struct SqlxMySqlConnection {
 
 #[async_trait]
 pub trait DatabaseConnection: Sized {
-    async fn new(config: &DatabaseConfig) -> Result<Self, Box<dyn Error>>;
+    async fn new(config: &DatabaseConfig) -> Result<Self>;
 }
 
 #[async_trait]
 impl DatabaseConnection for TiberiusConnection {
-    async fn new(config: &DatabaseConfig) -> Result<Self, Box<dyn Error>> {
+    async fn new(config: &DatabaseConfig) -> Result<Self> {
         let mut tiberius_config = Config::new();
         tiberius_config.encryption(EncryptionLevel::NotSupported);
         tiberius_config.authentication(AuthMethod::sql_server(&config.username, &config.password));
         tiberius_config.database(&config.database);
-        let tcp = TcpStream::connect(tiberius_config.get_addr()).await?;
+        let tcp = TcpStream::connect(tiberius_config.get_addr())
+            .await
+            .context("Failed to connect to MSSQL server")?;
         let tcp_compat = tcp.compat_write();
-        let client = Client::connect(tiberius_config, tcp_compat).await?;
+        let client = Client::connect(tiberius_config, tcp_compat)
+            .await
+            .context("Failed to establish MSSQL connection")?;
 
         Ok(TiberiusConnection { client })
     }
@@ -36,7 +40,7 @@ impl DatabaseConnection for TiberiusConnection {
 
 #[async_trait]
 impl DatabaseConnection for SqlxMySqlConnection {
-    async fn new(config: &DatabaseConfig) -> Result<Self, Box<dyn Error>> {
+    async fn new(config: &DatabaseConfig) -> Result<Self> {
         let options = MySqlConnectOptions::new()
             .host(&config.host)
             .port(config.port)
@@ -66,7 +70,7 @@ impl<C: DatabaseConnection> DatabaseConnectionFactory<C> {
         }
     }
 
-    pub async fn create_connection(&self) -> Result<C, Box<dyn Error>> {
+    pub async fn create_connection(&self) -> Result<C> {
         C::new(&self.config).await
     }
 }

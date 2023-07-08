@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -23,21 +24,23 @@ impl Mappings {
         self.mappings.len()
     }
 
-    pub(crate) fn from_toml(value: toml::Value) -> Result<Mappings, Box<dyn std::error::Error>> {
+    pub(crate) fn from_toml(value: toml::Value) -> Result<Mappings> {
         let mappings_table = value
             .get("mappings")
-            .ok_or("Missing mappings table")?
+            .ok_or(anyhow!("Missing mappings table"))?
             .as_array()
-            .ok_or("Invalid mappings table format")?;
+            .ok_or(anyhow!("Invalid mappings table format"))?;
 
         let mut mappings = HashMap::new();
 
         for mapping_table in mappings_table {
-            let mapping_table = mapping_table.as_table().ok_or("Invalid mapping format")?;
+            let mapping_table = mapping_table
+                .as_table()
+                .ok_or(anyhow!("Invalid mapping format"))?;
             let from_type = mapping_table
                 .get("from_type")
                 .and_then(|v| v.as_str())
-                .ok_or("Missing or invalid 'from_type' field")?
+                .ok_or(anyhow!("Missing or invalid 'from_type' field"))?
                 .to_string();
             let type_parameters = mapping_table
                 .get("type_parameters")
@@ -46,7 +49,7 @@ impl Mappings {
             let to_type = mapping_table
                 .get("to_type")
                 .and_then(|v| v.as_str())
-                .ok_or("Missing or invalid 'to_type' field")?
+                .ok_or(anyhow!("Missing or invalid 'to_type' field"))?
                 .to_string();
             let numeric_precision = mapping_table
                 .get("numeric_precision")

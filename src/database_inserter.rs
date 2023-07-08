@@ -1,8 +1,9 @@
 use crate::schema::ColumnSchema;
 
-use sqlx::{Executor, MySqlPool};
-use std::error::Error;
+use anyhow::Result;
+use sqlx::{Acquire, Executor, MySqlPool};
 
+#[derive(Clone)]
 pub struct DatabaseInserter {
     pool: MySqlPool,
 }
@@ -17,7 +18,7 @@ impl DatabaseInserter {
         table_name: &str,
         schema: &[ColumnSchema],
         drop: bool,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<()> {
         if drop {
             self.drop_table(table_name).await?;
         }
@@ -33,30 +34,27 @@ impl DatabaseInserter {
         Ok(())
     }
 
-    async fn create_table(
-        &mut self,
-        table_name: &str,
-        schema: &[ColumnSchema],
-    ) -> Result<(), Box<dyn Error>> {
+    async fn create_table(&mut self, table_name: &str, schema: &[ColumnSchema]) -> Result<()> {
         let create_table_query = &self.build_create_table_query(table_name, schema)?;
 
-        println!(
-            "[!] Creating table {}, query: \n      {}",
+        info!(
+            "Creating table {}, query: \n      {}",
             table_name, create_table_query
         );
 
         sqlx::query(create_table_query).execute(&self.pool).await?;
 
-        println!("\n[+] Table {} created successfully", table_name);
+        info!("Table {} created successfully", table_name);
 
         Ok(())
     }
 
-    pub async fn execute_transactional_query(&mut self, query: &str) -> Result<(), Box<dyn Error>> {
-        let mut transaction = self.pool.begin().await?;
+    pub async fn execute_transactional_query(&mut self, query: &str) -> Result<()> {
+        let mut connection = self.pool.acquire().await?;
+        let mut transaction = connection.begin().await?;
 
         if let Err(err) = transaction.execute(query).await {
-            eprintln!("Error details: {}", err);
+            error!("Transaction execution failed: {}", err);
         }
 
         transaction.commit().await?;
@@ -68,8 +66,8 @@ impl DatabaseInserter {
         &self,
         table_name: &str,
         schema: &[ColumnSchema],
-    ) -> Result<String, Box<dyn Error>> {
-        let columns: Result<Vec<String>, Box<dyn Error>> = schema
+    ) -> Result<String> {
+        let columns: Result<Vec<String>> = schema
             .iter()
             .map(|column| {
                 let mut type_properties = String::new();
@@ -97,7 +95,7 @@ impl DatabaseInserter {
         Ok(create_table_query)
     }
 
-    pub async fn get_max_allowed_packet(&mut self) -> Result<usize, Box<dyn Error>> {
+    pub async fn get_max_allowed_packet(&mut self) -> Result<usize> {
         let query = "SELECT @@max_allowed_packet";
 
         let max_allowed_packet: u32 = sqlx::query_scalar(query).fetch_one(&self.pool).await?;
@@ -105,7 +103,7 @@ impl DatabaseInserter {
         Ok(max_allowed_packet as usize)
     }
 
-    pub async fn drop_table(&mut self, table_name: &str) -> Result<(), Box<dyn Error>> {
+    pub async fn drop_table(&mut self, table_name: &str) -> Result<()> {
         let table_exists = self.table_exists(table_name).await?;
 
         if !table_exists {
@@ -116,22 +114,22 @@ impl DatabaseInserter {
 
         sqlx::query(&drop_table_query).execute(&self.pool).await?;
 
-        println!("\n[+] Table {} dropped successfully", table_name);
+        info!("Table {} dropped successfully", table_name);
 
         Ok(())
     }
 
-    async fn truncate_table(&mut self, table_name: &str) -> Result<(), Box<dyn Error>> {
+    async fn truncate_table(&mut self, table_name: &str) -> Result<()> {
         let drop_table_query = format!("TRUNCATE TABLE `{}`", table_name);
 
         sqlx::query(&drop_table_query).execute(&self.pool).await?;
 
-        println!("\n[+] Table {} truncated successfully", table_name);
+        info!("Table {} truncated successfully", table_name);
 
         Ok(())
     }
 
-    async fn table_exists(&mut self, table_name: &str) -> Result<bool, Box<dyn Error>> {
+    async fn table_exists(&mut self, table_name: &str) -> Result<bool> {
         let query = format!(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '{}'",
             table_name
