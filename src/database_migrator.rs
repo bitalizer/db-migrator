@@ -131,6 +131,8 @@ impl DatabaseMigrator {
     ) -> Result<()> {
         info!("Migrating {} rows", output_table);
 
+        const RESERVED_BYTES: usize = 10;
+
         let max_send_packet_bytes: usize = self.settings.send_packet_size;
 
         let insert_statement = Self::generate_insert_statement(output_table, mapped_schema);
@@ -145,7 +147,7 @@ impl DatabaseMigrator {
             let value_set = format!("({})", values);
             let value_set_bytes = value_set.len();
 
-            if total_bytes + value_set_bytes > max_send_packet_bytes {
+            if RESERVED_BYTES + total_bytes + value_set_bytes > max_send_packet_bytes {
                 Self::execute_batch(self.inserter.clone(), &insert_query, transaction_count)
                     .await?;
 
