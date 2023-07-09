@@ -36,7 +36,7 @@ impl DatabaseMigrator {
     pub async fn run(&mut self) -> Result<()> {
         info!("Running table migrator");
 
-        let config_send_packet_size = self.settings.send_packet_size;
+        let config_send_packet_size = self.settings.max_packet_bytes;
         let max_allowed_packet = self.inserter.get_max_allowed_packet().await?;
 
         check_packet_size(config_send_packet_size, max_allowed_packet).await?;
@@ -133,7 +133,7 @@ impl DatabaseMigrator {
 
         const RESERVED_BYTES: usize = 10;
 
-        let max_send_packet_bytes: usize = self.settings.send_packet_size;
+        let max_send_packet_bytes: usize = self.settings.max_packet_bytes;
 
         let insert_statement = Self::generate_insert_statement(output_table, mapped_schema);
         let mut rows_stream = self.extractor.fetch_rows_from_table(input_table).await?;
@@ -295,7 +295,7 @@ async fn check_packet_size(
     config_send_packet_size: usize,
     max_allowed_packet: usize,
 ) -> Result<()> {
-    info!(
+    debug!(
         "Max allowed packet size - Current: {} MB | Maximum {} MB",
         config_send_packet_size as f64 / 1_048_576.0,
         max_allowed_packet as f64 / 1_048_576.0

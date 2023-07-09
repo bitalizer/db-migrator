@@ -19,7 +19,7 @@ pub struct DatabaseConfig {
 
 #[derive(Debug, Clone)]
 pub struct SettingsConfig {
-    pub send_packet_size: usize,
+    pub max_packet_bytes: usize,
     pub reset_tables: bool,
     pub format_snake_case: bool,
     pub collation: String,
@@ -108,12 +108,10 @@ fn parse_database_config(config: Value) -> Result<DatabaseConfig> {
 }
 
 fn parse_settings_config(config: Value) -> Result<SettingsConfig> {
-    let max_send_packet_bytes = config
-        .get("send_packet_mb")
+    let max_packet_bytes = config
+        .get("max_packet_bytes")
         .and_then(|v| v.as_integer().map(|v| v as usize))
-        .ok_or_else(|| anyhow!("Missing or invalid max send packet value"))?
-        * 1024
-        * 1024;
+        .ok_or_else(|| anyhow!("Missing or invalid max send packet value"))?;
 
     let reset_tables = config
         .get("reset_tables")
@@ -140,7 +138,7 @@ fn parse_settings_config(config: Value) -> Result<SettingsConfig> {
         .collect::<Vec<String>>();
 
     Ok(SettingsConfig {
-        send_packet_size: max_send_packet_bytes,
+        max_packet_bytes,
         reset_tables,
         format_snake_case,
         collation,

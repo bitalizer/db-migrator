@@ -13,7 +13,7 @@ password = "db_pass"
 database = "output"
 
 [settings]
-send_packet_mb = 1
+max_packet_bytes = 1048576
 reset_tables = false
 format_snake_case = false
 collation = "Latin1_General_CI_AS"

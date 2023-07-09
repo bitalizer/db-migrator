@@ -1,17 +1,17 @@
-use chrono::Local;
-use env_logger::Env;
-
-use std::io::Write;
-use std::{env, fs, thread};
-use toml::Value;
-
 use crate::config::{Config, SettingsConfig};
 use crate::connection::{DatabaseConnectionFactory, SqlxMySqlConnection, TiberiusConnection};
 use crate::database_extractor::DatabaseExtractor;
 use crate::database_inserter::DatabaseInserter;
 use crate::database_migrator::DatabaseMigrator;
 use crate::mappings::Mappings;
+use crate::options::Options;
 use anyhow::{Context, Result};
+use chrono::Local;
+use env_logger::Env;
+use std::io::Write;
+use std::{env, fs, thread};
+use structopt::StructOpt;
+use toml::Value;
 
 mod config;
 mod connection;
@@ -20,6 +20,7 @@ mod database_inserter;
 mod database_migrator;
 mod helpers;
 mod mappings;
+mod options;
 mod schema;
 
 #[macro_use]
@@ -37,13 +38,15 @@ async fn main() -> Result<()> {
 }
 
 async fn init() -> Result<()> {
-    initialize_logger();
+    let options = Options::from_args();
+
+    initialize_logger(options.verbose);
 
     // Parse config
     let config = load_config().context("Failed to load config file")?;
     let mappings = load_mappings().context("Failed to load mappings file")?;
 
-    info!("Total mappings loaded: {}", mappings.len());
+    debug!("Total mappings loaded: {}", mappings.len());
     info!("Initializing connections...");
 
     let tiberius_connection = create_tiberius_connection(&config).await?;
@@ -96,9 +99,9 @@ async fn run_migration(
     Ok(())
 }
 
-fn initialize_logger() {
+fn initialize_logger(verbose: bool) {
     // Set the `RUST_LOG` environment variable to control the logging level
-    env::set_var("RUST_LOG", "info");
+    env::set_var("RUST_LOG", if verbose { "debug" } else { "info" });
 
     // Initialize the logger with the desired format and additional configuration
     env_logger::Builder::from_env(Env::default().default_filter_or("info"))
