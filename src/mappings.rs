@@ -1,12 +1,12 @@
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Mappings {
     mappings: HashMap<String, Mapping>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Mapping {
     pub to_type: String,
     pub type_parameters: bool,

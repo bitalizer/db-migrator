@@ -83,7 +83,7 @@ async fn run_migration(
     settings: SettingsConfig,
     mappings: Mappings,
 ) -> Result<()> {
-    let extractor = DatabaseExtractor::new(tiberius_connection.client);
+    let extractor = DatabaseExtractor::new(tiberius_connection.pool);
     let inserter = DatabaseInserter::new(sqlx_connection.pool);
 
     let mut migrator = DatabaseMigrator::new(extractor, inserter, settings, mappings);

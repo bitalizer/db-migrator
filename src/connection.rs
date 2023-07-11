@@ -1,13 +1,13 @@
 use crate::config::DatabaseConfig;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
+use bb8::Pool;
+use bb8_tiberius::ConnectionManager;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions};
-use tiberius::{AuthMethod, Client, Config, EncryptionLevel};
-use tokio::net::TcpStream;
-use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
+use tiberius::{AuthMethod, Config, EncryptionLevel};
 
 pub struct TiberiusConnection {
-    pub client: Client<Compat<TcpStream>>,
+    pub pool: Pool<ConnectionManager>,
 }
 
 pub struct SqlxMySqlConnection {
@@ -26,15 +26,19 @@ impl DatabaseConnection for TiberiusConnection {
         tiberius_config.encryption(EncryptionLevel::NotSupported);
         tiberius_config.authentication(AuthMethod::sql_server(&config.username, &config.password));
         tiberius_config.database(&config.database);
-        let tcp = TcpStream::connect(tiberius_config.get_addr())
+
+        let mgr = ConnectionManager::new(tiberius_config);
+        let pool = Pool::builder().max_size(4).build(mgr).await?;
+
+        /*let tcp = TcpStream::connect(tiberius_config.get_addr())
             .await
             .context("Failed to connect to MSSQL server")?;
         let tcp_compat = tcp.compat_write();
         let client = Client::connect(tiberius_config, tcp_compat)
             .await
-            .context("Failed to establish MSSQL connection")?;
+            .context("Failed to establish MSSQL connection")?;*/
 
-        Ok(TiberiusConnection { client })
+        Ok(TiberiusConnection { pool })
     }
 }
 

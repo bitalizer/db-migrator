@@ -1,27 +1,33 @@
 use crate::schema::ColumnSchema;
 use anyhow::{anyhow, Result};
+use bb8::Pool;
+use bb8_tiberius::ConnectionManager;
 use chrono::DateTime as ChronosDateTime;
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use futures::stream::{LocalBoxStream, StreamExt};
+use futures::stream::{BoxStream, LocalBoxStream, StreamExt};
 use hex::encode;
+use std::rc::Rc;
+use tiberius::error::Error;
 use tiberius::numeric::Numeric;
 use tiberius::time::{Date, DateTime, DateTime2, DateTimeOffset, SmallDateTime, Time};
 use tiberius::{Client, ColumnData, Row};
 use tokio::net::TcpStream;
 use tokio_util::compat::Compat;
 
+#[derive(Clone)]
 pub struct DatabaseExtractor {
-    client: Client<Compat<TcpStream>>,
+    pool: Pool<ConnectionManager>,
 }
 
 impl DatabaseExtractor {
-    pub fn new(client: Client<Compat<TcpStream>>) -> Self {
-        DatabaseExtractor { client }
+    pub fn new(pool: Pool<ConnectionManager>) -> Self {
+        DatabaseExtractor { pool }
     }
 
     pub async fn fetch_tables(&mut self) -> Result<Vec<String>> {
-        let rows = self
-            .client
+        let mut conn = self.pool.get().await?;
+
+        let rows = conn
             .simple_query(
                 "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'",
             )
@@ -45,6 +51,8 @@ impl DatabaseExtractor {
     }
 
     pub async fn get_table_schema(&mut self, table: &str) -> Result<Vec<ColumnSchema>> {
+        let mut conn = self.pool.get().await?;
+
         let query = format!(
             "SELECT
             COLUMN_NAME,
@@ -57,12 +65,7 @@ impl DatabaseExtractor {
             table
         );
 
-        let rows = self
-            .client
-            .simple_query(query)
-            .await?
-            .into_first_result()
-            .await?;
+        let rows = conn.simple_query(query).await?.into_first_result().await?;
 
         let schema = rows
             .into_iter()
@@ -81,45 +84,45 @@ impl DatabaseExtractor {
     pub async fn fetch_rows_from_table(
         &mut self,
         table_name: &str,
-    ) -> Result<LocalBoxStream<Result<Vec<String>, tiberius::error::Error>>, tiberius::error::Error>
-    {
-        let stream = self
-            .client
-            .simple_query(format!("SELECT * FROM [{}]", table_name))
+    ) -> Result<BoxStream<Result<Vec<String>>>> {
+        let mut conn = self.pool.get().await?;
+        let query = format!("SELECT * FROM [{}]", table_name);
+        let stream = &conn
+            .simple_query(query)
             .await?
             .into_row_stream()
-            .map(|row| Ok(Self::format_row_values(row.unwrap()))) // Map each row to the formatted values
-            .boxed_local();
+            .map(|row| Ok(format_row_values(row.unwrap()))) // Map each row to the formatted values
+            .boxed();
 
         Ok(stream)
     }
+}
 
-    fn format_row_values(row: Row) -> Vec<String> {
-        row.into_iter().map(Self::format_column_value).collect()
-    }
+fn format_row_values(row: Row) -> Vec<String> {
+    row.into_iter().map(format_column_value).collect()
+}
 
-    fn format_column_value(item: ColumnData) -> String {
-        match item {
-            ColumnData::Binary(Some(val)) => format!("'0x{}'", encode(val)),
-            ColumnData::Binary(None) => "NULL".to_string(),
-            ColumnData::Bit(val) => val.unwrap_or_default().to_string(),
-            ColumnData::I16(val) => format_number_value(val),
-            ColumnData::I32(val) => format_number_value(val),
-            ColumnData::I64(val) => format_number_value(val),
-            ColumnData::F32(val) => format_string_value(val),
-            ColumnData::F64(val) => format_string_value(val),
-            ColumnData::Guid(val) => format_string_value(val),
-            ColumnData::Numeric(val) => format_numeric_value(val),
-            ColumnData::String(val) => format_string_value(val),
-            ColumnData::Time(ref val) => format_time(val),
-            ColumnData::Date(ref val) => format_date(val),
-            ColumnData::SmallDateTime(ref val) => format_small_datetime(val),
-            ColumnData::DateTime(ref val) => format_datetime(val),
-            ColumnData::DateTime2(ref val) => format_datetime2(val),
-            ColumnData::DateTimeOffset(ref val) => format_datetime_offset(val),
-            ColumnData::U8(val) => val.unwrap_or_default().to_string(),
-            ColumnData::Xml(val) => val.unwrap().as_ref().to_string(),
-        }
+fn format_column_value(item: ColumnData) -> String {
+    match item {
+        ColumnData::Binary(Some(val)) => format!("'0x{}'", encode(val)),
+        ColumnData::Binary(None) => "NULL".to_string(),
+        ColumnData::Bit(val) => val.unwrap_or_default().to_string(),
+        ColumnData::I16(val) => format_number_value(val),
+        ColumnData::I32(val) => format_number_value(val),
+        ColumnData::I64(val) => format_number_value(val),
+        ColumnData::F32(val) => format_string_value(val),
+        ColumnData::F64(val) => format_string_value(val),
+        ColumnData::Guid(val) => format_string_value(val),
+        ColumnData::Numeric(val) => format_numeric_value(val),
+        ColumnData::String(val) => format_string_value(val),
+        ColumnData::Time(ref val) => format_time(val),
+        ColumnData::Date(ref val) => format_date(val),
+        ColumnData::SmallDateTime(ref val) => format_small_datetime(val),
+        ColumnData::DateTime(ref val) => format_datetime(val),
+        ColumnData::DateTime2(ref val) => format_datetime2(val),
+        ColumnData::DateTimeOffset(ref val) => format_datetime_offset(val),
+        ColumnData::U8(val) => val.unwrap_or_default().to_string(),
+        ColumnData::Xml(val) => val.unwrap().as_ref().to_string(),
     }
 }
 
