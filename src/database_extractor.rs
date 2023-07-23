@@ -1,22 +1,20 @@
 use crate::schema::ColumnSchema;
 use anyhow::{anyhow, Result};
-use bb8::Pool;
+use bb8::{Pool, PooledConnection};
 use bb8_tiberius::ConnectionManager;
 use chrono::DateTime as ChronosDateTime;
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use futures::stream::{BoxStream, LocalBoxStream, StreamExt};
+use futures::stream::{BoxStream, StreamExt};
+use futures::TryStreamExt;
 use hex::encode;
-use std::rc::Rc;
-use tiberius::error::Error;
+
 use tiberius::numeric::Numeric;
 use tiberius::time::{Date, DateTime, DateTime2, DateTimeOffset, SmallDateTime, Time};
-use tiberius::{Client, ColumnData, Row};
-use tokio::net::TcpStream;
-use tokio_util::compat::Compat;
+use tiberius::{ColumnData, Row};
 
 #[derive(Clone)]
 pub struct DatabaseExtractor {
-    pool: Pool<ConnectionManager>,
+    pub pool: Pool<ConnectionManager>,
 }
 
 impl DatabaseExtractor {
@@ -80,22 +78,21 @@ impl DatabaseExtractor {
 
         Ok(schema)
     }
+}
 
-    pub async fn fetch_rows_from_table(
-        &mut self,
-        table_name: &str,
-    ) -> Result<BoxStream<Result<Vec<String>>>> {
-        let mut conn = self.pool.get().await?;
-        let query = format!("SELECT * FROM [{}]", table_name);
-        let stream = &conn
-            .simple_query(query)
-            .await?
-            .into_row_stream()
-            .map(|row| Ok(format_row_values(row.unwrap()))) // Map each row to the formatted values
-            .boxed();
+pub async fn fetch_table_data<'a>(
+    conn: &'a mut PooledConnection<'_, ConnectionManager>,
+    table: &'a str,
+) -> Result<BoxStream<'a, Result<Vec<String>, tiberius::error::Error>>> {
+    let query = format!("SELECT * FROM [{}]", table);
+    let stream = conn
+        .simple_query(query)
+        .await?
+        .into_row_stream()
+        .map_ok(format_row_values)
+        .boxed();
 
-        Ok(stream)
-    }
+    Ok(stream)
 }
 
 fn format_row_values(row: Row) -> Vec<String> {

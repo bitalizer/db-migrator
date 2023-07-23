@@ -1,17 +1,19 @@
 use crate::config::SettingsConfig;
-use crate::database_extractor::DatabaseExtractor;
+use crate::database_extractor::{fetch_table_data, DatabaseExtractor};
 use crate::database_inserter::DatabaseInserter;
-use crate::helpers::{format_snake_case, print_schema_info};
+use crate::helpers::format_snake_case;
 use crate::mappings::Mappings;
 use crate::schema::ColumnSchema;
 use anyhow::{bail, Context, Result};
 
-use futures::{StreamExt, TryStreamExt};
+use futures::future::join_all;
+use futures::TryStreamExt;
 use log::info;
 use std::sync::Arc;
-use tokio::spawn;
 
-use tokio::sync::mpsc;
+use tokio::spawn;
+use tokio::sync::Semaphore;
+
 use tokio::time::Instant;
 
 pub struct DatabaseMigrator {
@@ -19,6 +21,7 @@ pub struct DatabaseMigrator {
     inserter: DatabaseInserter,
     settings: SettingsConfig,
     mappings: Mappings,
+    max_concurrent_tasks: usize,
 }
 
 impl DatabaseMigrator {
@@ -27,12 +30,14 @@ impl DatabaseMigrator {
         inserter: DatabaseInserter,
         settings: SettingsConfig,
         mappings: Mappings,
+        max_concurrent_tasks: usize,
     ) -> Self {
         DatabaseMigrator {
             extractor,
             inserter,
             settings,
             mappings,
+            max_concurrent_tasks,
         }
     }
 
@@ -44,91 +49,235 @@ impl DatabaseMigrator {
 
         check_packet_size(config_send_packet_size, max_allowed_packet).await?;
 
-        run_parallel_queries(&mut self.extractor);
+        migrate_tables(
+            &mut self.extractor,
+            &mut self.inserter,
+            &mut self.mappings,
+            &mut self.settings,
+            self.max_concurrent_tasks,
+        )
+        .await?;
 
-        //self.migrate_tables().await?;
         Ok(())
     }
-
-    /*async fn migrate_tables(&mut self) -> Result<()> {
-        // Fetch all tables from the database
-        let mut tables = self.extractor.fetch_tables().await?;
-
-        if tables.is_empty() {
-            bail!("No tables to process");
-        }
-
-        // Filter and keep only the whitelisted tables
-        tables.retain(|table| self.settings.whitelisted_tables.contains(table));
-
-        if tables.is_empty() {
-            bail!("No tables to process after filtering whitelisted tables");
-        }
-
-        info!("Tables to migrate: {}", tables.join(", "));
-
-        let start_time = Instant::now();
-
-        // Process each table
-        for table_name in &tables {
-            let extractor = self.extractor.clone();
-            let inserter = self.inserter.clone();
-            let mappings = self.mappings.clone();
-            let settings = self.settings.clone();
-
-            migrate_table(extractor, inserter, mappings, settings, table_name.clone()).await?;
-        }
-
-        let end_time = Instant::now();
-
-        info!(
-            "Migration finished, total time took: {}s",
-            end_time.saturating_duration_since(start_time).as_secs_f32()
-        );
-
-        Ok(())
-    }*/
 }
 
-pub async fn run_parallel_queries(extractor: &mut DatabaseExtractor) -> Result<()> {
+pub async fn migrate_tables(
+    extractor: &mut DatabaseExtractor,
+    inserter: &mut DatabaseInserter,
+    mappings: &mut Mappings,
+    settings: &mut SettingsConfig,
+    max_concurrent_tasks: usize,
+) -> Result<()> {
     // Fetch the list of tables
-    let tables = extractor.fetch_tables().await?;
+    let mut tables = extractor.fetch_tables().await?;
 
-    // Create a channel to receive results from spawned tasks
-    let (sender, mut receiver) = mpsc::channel(10);
+    if tables.is_empty() {
+        bail!("No tables to process");
+    }
+
+    // Filter and keep only the whitelisted tables
+    tables.retain(|table| settings.whitelisted_tables.contains(table));
+
+    if tables.is_empty() {
+        bail!("No tables to process after filtering whitelisted tables");
+    }
+
+    info!("Tables to migrate: {}", tables.join(", "));
+
+    let start_time = Instant::now();
+
+    // Create a semaphore to limit the number of concurrent tasks
+    let semaphore = Arc::new(Semaphore::new(max_concurrent_tasks));
+
+    // Spawn a task for each table to fetch the rows concurrently
+    let mut tasks = vec![];
 
     // Spawn a task for each table to fetch the rows concurrently
     for table in tables {
-        let sender = sender.clone();
-        let mut extractor = extractor.clone();
+        // Clone the shared semaphore for each task
+        let semaphore_clone = Arc::clone(&semaphore);
+
+        let extractor = extractor.clone();
+        let mut inserter = inserter.clone();
+        let mappings = mappings.clone();
+        let settings = settings.clone();
 
         // Spawn a task for each table
+        let task = spawn(async move {
+            // Acquire a semaphore permit before starting the task
+            let permit = semaphore_clone
+                .acquire()
+                .await
+                .expect("Failed to acquire semaphore permit");
 
-        //let mut extractor = extractor.clone();
+            migrate_table(&extractor, &mut inserter, &mappings, &settings, &table)
+                .await
+                .expect("Failed to migrate table");
 
-        spawn(async move {
-            let mut rows = extractor.fetch_rows_from_table(&table).await.unwrap();
-
-            // Collect the rows and send the result through the channel
-            let result: Vec<Result<Vec<String>, _>> = rows.collect().await;
-            sender.send(result).await.unwrap();
+            // Release the semaphore permit when the task is done
+            drop(permit);
         });
+
+        tasks.push(task);
     }
 
-    // Process the results received from the tasks
-    while let Ok(results) = receiver.try_recv() {
-        for result in results {
-            match result {
-                Ok(rows) => {
-                    for row in rows {
-                        // Process each row here
-                        println!("{:?}", row);
-                    }
-                }
-                Err(err) => {
-                    // Handle the error
-                    eprintln!("Error: {:?}", err);
-                }
+    // Wait for all tasks to complete
+    join_all(tasks).await;
+
+    let end_time = Instant::now();
+
+    info!(
+        "Migration finished, total time took: {}s",
+        end_time.saturating_duration_since(start_time).as_secs_f32()
+    );
+
+    Ok(())
+}
+
+async fn migrate_table(
+    extractor: &DatabaseExtractor,
+    inserter: &mut DatabaseInserter,
+    mappings: &Mappings,
+    settings: &SettingsConfig,
+    table_name: &String,
+) -> Result<()> {
+    info!("Migrating table: {}", table_name);
+
+    let start_time = Instant::now();
+
+    // Fetch table schema
+    let table_schema = extractor.clone().get_table_schema(table_name).await?;
+
+    let output_table_name: String = if settings.format_snake_case {
+        format_snake_case(table_name)
+    } else {
+        table_name.clone()
+    };
+
+    let mapped_schema = map_table_schema(mappings, &table_schema, settings.format_snake_case);
+
+    // Create or truncate in the output database
+
+    inserter
+        .create_or_truncate_table(&output_table_name, &mapped_schema, settings.reset_tables)
+        .await?;
+
+    // Migrate rows from the table
+    let migrated_count = migrate_table_rows(
+        extractor.clone(),
+        inserter,
+        settings.clone(),
+        table_name,
+        &output_table_name,
+        &mapped_schema,
+    )
+    .await?;
+
+    let end_time = Instant::now();
+    info!(
+        "Table {} migrated, rows: {}, took: {}s",
+        table_name,
+        migrated_count,
+        end_time.saturating_duration_since(start_time).as_secs_f32()
+    );
+
+    Ok(())
+}
+
+async fn migrate_table_rows(
+    extractor: DatabaseExtractor,
+    inserter: &mut DatabaseInserter,
+    settings: SettingsConfig,
+    input_table: &str,
+    output_table: &str,
+    mapped_schema: &[ColumnSchema],
+) -> Result<usize> {
+    info!("Migrating {} rows", input_table);
+
+    const RESERVED_BYTES: usize = 10;
+
+    let insert_statement = generate_insert_statement(output_table, mapped_schema);
+
+    let mut conn = extractor.pool.get().await?;
+    let mut stream = fetch_table_data(&mut conn, input_table).await?;
+
+    let mut insert_query = String::with_capacity(settings.max_packet_bytes);
+    let mut total_bytes = insert_statement.len();
+    let mut transaction_count = 0;
+    let mut total_transaction_count = 0; //Track the row count
+
+    while let Some(row_values) = stream.try_next().await? {
+        let values = row_values.join(", ");
+        let value_set = format!("({})", values);
+        let value_set_bytes = value_set.len();
+
+        if RESERVED_BYTES + total_bytes + value_set_bytes > settings.max_packet_bytes {
+            execute_batch(inserter, &insert_query, transaction_count).await?;
+            total_transaction_count += transaction_count;
+
+            insert_query.clear();
+            total_bytes = insert_statement.len();
+            transaction_count = 0;
+        }
+
+        if !insert_query.is_empty() {
+            insert_query.push(',');
+            total_bytes += 1;
+        }
+
+        if transaction_count == 0 {
+            insert_query.push_str(&insert_statement);
+        }
+
+        insert_query.push_str(&value_set);
+        total_bytes += value_set_bytes;
+        transaction_count += 1;
+    }
+
+    if transaction_count > 0 {
+        // If there are remaining rows in the insert_query, execute them
+        execute_batch(inserter, &insert_query, transaction_count).await?;
+        total_transaction_count += transaction_count;
+    }
+
+    Ok(total_transaction_count)
+}
+
+async fn execute_batch(
+    inserter: &mut DatabaseInserter,
+    insert_query: &String,
+    transaction_count: usize,
+) -> Result<()> {
+    if !insert_query.is_empty() {
+        let cloned_insert_query = Arc::new(insert_query.clone());
+
+        let start_time = Instant::now();
+
+        let query_str = cloned_insert_query.as_str();
+        debug!(
+            "Sending {} bytes batch with {} transactions",
+            query_str.len(),
+            transaction_count
+        );
+
+        let execution_result = inserter
+            .execute_transactional_query(query_str)
+            .await
+            .context("Transaction execution");
+
+        match execution_result {
+            Ok(_) => {
+                let end_time = Instant::now();
+                debug!(
+                    "Executed batch with {} transactions, bytes: {}, took: {}s",
+                    transaction_count,
+                    query_str.len(),
+                    end_time.saturating_duration_since(start_time).as_secs_f32()
+                );
+            }
+            Err(err) => {
+                error!("Transaction execution failed: {}", err);
             }
         }
     }
@@ -136,25 +285,8 @@ pub async fn run_parallel_queries(extractor: &mut DatabaseExtractor) -> Result<(
     Ok(())
 }
 
-async fn check_packet_size(
-    config_send_packet_size: usize,
-    max_allowed_packet: usize,
-) -> Result<()> {
-    debug!(
-        "Max allowed packet size - Current: {} MB | Maximum {} MB",
-        config_send_packet_size as f64 / 1_048_576.0,
-        max_allowed_packet as f64 / 1_048_576.0
-    );
-
-    if config_send_packet_size > max_allowed_packet {
-        bail!("Configured send packet size exceeds maximum allowed packet size")
-    }
-
-    Ok(())
-}
-
 fn map_table_schema(
-    mappings: Mappings,
+    mappings: &Mappings,
     table_schema: &[ColumnSchema],
     format: bool,
 ) -> Vec<ColumnSchema> {
@@ -231,149 +363,19 @@ fn generate_insert_statement(table_name: &str, schema: &[ColumnSchema]) -> Strin
     )
 }
 
-async fn execute_batch(
-    mut inserter: DatabaseInserter,
-    insert_query: &String,
-    transaction_count: usize,
+async fn check_packet_size(
+    config_send_packet_size: usize,
+    max_allowed_packet: usize,
 ) -> Result<()> {
-    if !insert_query.is_empty() {
-        let cloned_insert_query = Arc::new(insert_query.clone());
-
-        let start_time = Instant::now();
-
-        let query_str = cloned_insert_query.as_str();
-        info!(
-            "Sending {} bytes batch with {} transactions",
-            query_str.len(),
-            transaction_count
-        );
-
-        let execution_result = inserter
-            .execute_transactional_query(query_str)
-            .await
-            .context("Transaction execution");
-
-        match execution_result {
-            Ok(_) => {
-                let end_time = Instant::now();
-                info!(
-                    "Executed batch with {} transactions, bytes: {}, took: {}s",
-                    transaction_count,
-                    query_str.len(),
-                    end_time.saturating_duration_since(start_time).as_secs_f32()
-                );
-            }
-            Err(err) => {
-                error!("Transaction execution failed: {}", err);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn migrate_rows(
-    mut extractor: DatabaseExtractor,
-    mut inserter: DatabaseInserter,
-    settings: SettingsConfig,
-    input_table: &str,
-    output_table: &str,
-    mapped_schema: &[ColumnSchema],
-) -> Result<()> {
-    info!("Migrating {} rows", output_table);
-
-    const RESERVED_BYTES: usize = 10;
-
-    let insert_statement = generate_insert_statement(output_table, mapped_schema);
-    let mut rows_stream = extractor.fetch_rows_from_table(input_table).await?;
-
-    let mut insert_query = String::with_capacity(settings.max_packet_bytes);
-    let mut total_bytes = insert_statement.len();
-    let mut transaction_count = 0;
-
-    while let Some(row_values) = rows_stream.try_next().await? {
-        let values = row_values.join(", ");
-        let value_set = format!("({})", values);
-        let value_set_bytes = value_set.len();
-
-        if RESERVED_BYTES + total_bytes + value_set_bytes > settings.max_packet_bytes {
-            execute_batch(inserter.clone(), &insert_query, transaction_count).await?;
-
-            insert_query.clear();
-            total_bytes = insert_statement.len();
-            transaction_count = 0;
-        }
-
-        if !insert_query.is_empty() {
-            insert_query.push(',');
-            total_bytes += 1;
-        }
-
-        if transaction_count == 0 {
-            insert_query.push_str(&insert_statement);
-        }
-
-        insert_query.push_str(&value_set);
-        total_bytes += value_set_bytes;
-        transaction_count += 1;
-    }
-
-    execute_batch(inserter.clone(), &insert_query, transaction_count).await?;
-
-    Ok(())
-}
-
-async fn migrate_table(
-    mut extractor: DatabaseExtractor,
-    mut inserter: DatabaseInserter,
-    mappings: Mappings,
-    settings: SettingsConfig,
-    table_name: String,
-) -> Result<()> {
-    info!("Migrating table: {}", table_name);
-
-    let start_time = Instant::now();
-
-    // Fetch table schema
-    let table_schema = extractor.get_table_schema(&table_name).await?;
-
-    let output_table_name: String = if settings.format_snake_case {
-        format_snake_case(&table_name)
-    } else {
-        table_name.clone()
-    };
-
-    /*println!("\nInput schema");
-    print_schema_info(&table_schema);*/
-
-    let mapped_schema = map_table_schema(mappings, &table_schema, settings.format_snake_case);
-
-    /*println!("\nTarget schema");
-    print_schema_info(&mapped_schema);*/
-
-    // Create or truncate in the output database
-
-    inserter
-        .create_or_truncate_table(&output_table_name, &mapped_schema, settings.reset_tables)
-        .await?;
-
-    // Migrate rows from the table
-    migrate_rows(
-        extractor,
-        inserter,
-        settings,
-        &table_name,
-        &output_table_name,
-        &mapped_schema,
-    )
-    .await?;
-
-    let end_time = Instant::now();
-    info!(
-        "Table {} migrated, took: {}s",
-        table_name,
-        end_time.saturating_duration_since(start_time).as_secs_f32()
+    debug!(
+        "Max allowed packet size - Current: {} MB | Maximum {} MB",
+        config_send_packet_size as f64 / 1_048_576.0,
+        max_allowed_packet as f64 / 1_048_576.0
     );
+
+    if config_send_packet_size > max_allowed_packet {
+        bail!("Configured send packet size exceeds maximum allowed packet size")
+    }
 
     Ok(())
 }

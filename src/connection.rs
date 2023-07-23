@@ -1,5 +1,5 @@
 use crate::config::DatabaseConfig;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bb8::Pool;
 use bb8_tiberius::ConnectionManager;
@@ -28,15 +28,11 @@ impl DatabaseConnection for TiberiusConnection {
         tiberius_config.database(&config.database);
 
         let mgr = ConnectionManager::new(tiberius_config);
-        let pool = Pool::builder().max_size(4).build(mgr).await?;
-
-        /*let tcp = TcpStream::connect(tiberius_config.get_addr())
+        let pool = Pool::builder()
+            .max_size(4)
+            .build(mgr)
             .await
             .context("Failed to connect to MSSQL server")?;
-        let tcp_compat = tcp.compat_write();
-        let client = Client::connect(tiberius_config, tcp_compat)
-            .await
-            .context("Failed to establish MSSQL connection")?;*/
 
         Ok(TiberiusConnection { pool })
     }

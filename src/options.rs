@@ -1,3 +1,4 @@
+use std::thread::available_parallelism;
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
 
@@ -12,4 +13,18 @@ pub struct Options {
     /// Activate verbose mode
     #[structopt(short = "v", long = "verbose")]
     pub verbose: bool,
+
+    /// Set concurrency
+    #[structopt(short = "c", long = "concurrency", default_value = "0")]
+    concurrency: usize,
+}
+
+impl Options {
+    pub fn concurrency(&self) -> usize {
+        if self.concurrency == 0 {
+            available_parallelism().unwrap().get()
+        } else {
+            self.concurrency
+        }
+    }
 }

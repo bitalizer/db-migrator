@@ -26,7 +26,7 @@ mod schema;
 #[macro_use]
 extern crate log;
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     if let Err(errors) = init().await.with_context(|| "Initialization failed") {
         for (index, error) in errors.chain().enumerate() {
@@ -57,6 +57,7 @@ async fn init() -> Result<()> {
         sqlx_connection,
         config.settings().clone(),
         mappings,
+        options.concurrency(),
     )
     .await?;
 
@@ -82,11 +83,18 @@ async fn run_migration(
     sqlx_connection: SqlxMySqlConnection,
     settings: SettingsConfig,
     mappings: Mappings,
+    max_concurrent_tasks: usize,
 ) -> Result<()> {
     let extractor = DatabaseExtractor::new(tiberius_connection.pool);
     let inserter = DatabaseInserter::new(sqlx_connection.pool);
 
-    let mut migrator = DatabaseMigrator::new(extractor, inserter, settings, mappings);
+    let mut migrator = DatabaseMigrator::new(
+        extractor,
+        inserter,
+        settings,
+        mappings,
+        max_concurrent_tasks,
+    );
 
     let migration_result = migrator.run().await.with_context(|| "Migration failed");
 
@@ -105,7 +113,7 @@ fn initialize_logger(verbose: bool) {
 
     // Initialize the logger with the desired format and additional configuration
     env_logger::Builder::from_env(Env::default().default_filter_or("info"))
-        .filter_module("tiberius", log::LevelFilter::Warn)
+        .filter_module("tiberius", log::LevelFilter::Error)
         .filter_module("sqlx", log::LevelFilter::Warn)
         .format(|buf, record| {
             let timestamp = Local::now().format("%H:%M:%S");

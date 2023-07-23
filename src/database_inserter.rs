@@ -37,10 +37,7 @@ impl DatabaseInserter {
     async fn create_table(&mut self, table_name: &str, schema: &[ColumnSchema]) -> Result<()> {
         let create_table_query = &self.build_create_table_query(table_name, schema)?;
 
-        info!(
-            "Creating table {}, query: \n      {}",
-            table_name, create_table_query
-        );
+        info!("Creating table {}", table_name);
 
         sqlx::query(create_table_query).execute(&self.pool).await?;
 
