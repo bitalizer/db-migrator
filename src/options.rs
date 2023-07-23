@@ -14,6 +14,10 @@ pub struct Options {
     #[structopt(short = "v", long = "verbose")]
     pub verbose: bool,
 
+    /// Activate quiet mode
+    #[structopt(short = "q", long = "quiet")]
+    pub quiet: bool,
+
     /// Set concurrency
     #[structopt(short = "c", long = "concurrency", default_value = "0")]
     concurrency: usize,

@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
 async fn init() -> Result<()> {
     let options = Options::from_args();
 
-    initialize_logger(options.verbose);
+    initialize_logger(options.verbose, options.quiet);
 
     // Parse config
     let config = load_config().context("Failed to load config file")?;
@@ -107,9 +107,14 @@ async fn run_migration(
     Ok(())
 }
 
-fn initialize_logger(verbose: bool) {
+fn initialize_logger(verbose: bool, quiet: bool) {
     // Set the `RUST_LOG` environment variable to control the logging level
-    env::set_var("RUST_LOG", if verbose { "debug" } else { "info" });
+
+    if quiet {
+        env::set_var("RUST_LOG", "warn");
+    } else {
+        env::set_var("RUST_LOG", if verbose { "debug" } else { "info" });
+    }
 
     // Initialize the logger with the desired format and additional configuration
     env_logger::Builder::from_env(Env::default().default_filter_or("info"))
