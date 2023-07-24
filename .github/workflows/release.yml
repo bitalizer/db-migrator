@@ -1,98 +1,76 @@
 name: Release
-
 on:
   push:
-    branches:
-      - main
+    tags:
+      - "v*[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  build-and-upload:
+    name: Build and upload
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        # You can add more, for any target you'd like!
+        include:
+          - build: linux
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+
+          - build: macos
+            os: macos-latest
+            target: x86_64-apple-darwin
 
     steps:
-    - name: Check out code
-      uses: actions/checkout@v2
+      - name: Checkout
+        uses: actions/checkout@v3
 
-    - name: Set up Rust
-      uses: actions/setup-rust@v1
-      with:
-        rust-version: stable
+      - name: Get the release version from the tag
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
-    # Get the version from Cargo.toml
-    - name: Get version from Cargo.toml
-      run: echo "VERSION=$(grep -oP '(?<=version = \")[0-9]+\.[0-9]+\.[0-9]+' Cargo.toml)" >> $GITHUB_ENV
+      - name: Install Rust
+        # Or @nightly if you want
+        uses: dtolnay/rust-toolchain@stable
+        # Arguments to pass in
+        with:
+          # Make Rust compile to our target (defined in the matrix)
+          targets: ${{ matrix.target }}
 
-    # Check if the current commit changed the version in Cargo.toml
-    - name: Check if version has changed
-      id: check_version_changed
-      run: |
-        if [ "${{ env.VERSION }}" == "$(git show -s --format=%s | grep -oP '(?<=bump version to )\[0-9]+\.[0-9]+\.[0-9]+')" ]; then
-          echo "VERSION_CHANGED=false" >> $GITHUB_ENV
-        else
-          echo "VERSION_CHANGED=true" >> $GITHUB_ENV
-        fi
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          use-cross: true
+          command: build
+          args: --verbose --release --target ${{ matrix.target }}
 
-    # Auto-bump Cargo.toml version if needed
-    - name: Auto-bump Cargo.toml version if needed
-      run: |
-        if [ "${{ env.VERSION_CHANGED }}" == "true" ]; then
-          echo "Bumping Cargo.toml version..."
-          cargo bump patch
-          git config user.name "Your GitHub Username"
-          git config user.email "your.email@example.com"
-          git commit -am "Bump version to ${{ env.VERSION }}"
-        else
-          echo "Version unchanged. Skipping auto-bump."
-        fi
+      - name: Build archive
+        shell: bash
+        run: |
+          # Replace with the name of your binary
+          binary_name="db-migrator"
 
-    # Build for macOS
-    - name: Build for macOS
-      if: matrix.os == 'macos-latest'
-      run: cargo build --release
+          dirname="$binary_name-${{ env.VERSION }}-${{ matrix.target }}"
+          mkdir "$dirname"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            mv "target/${{ matrix.target }}/release/$binary_name.exe" "$dirname"
+          else
+            mv "target/${{ matrix.target }}/release/$binary_name" "$dirname"
+          fi
 
-    # Create macOS Release
-    - name: Create macOS Release
-      if: matrix.os == 'macos-latest'
-      run: |
-        VERSION=$(echo ${{ env.VERSION }})
-        mkdir -p release
-        cp target/release/db-migrator release/db-migrator-${VERSION}
-        cd release
-        tar czvf db-migrator-${VERSION}-macos.tar.gz db-migrator-${VERSION}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            7z a "$dirname.zip" "$dirname"
+            echo "ASSET=$dirname.zip" >> $GITHUB_ENV
+          else
+            tar -czf "$dirname.tar.gz" "$dirname"
+            echo "ASSET=$dirname.tar.gz" >> $GITHUB_ENV
+          fi
 
-    # Build for Windows
-    - name: Build for Windows
-      if: matrix.os == 'windows-latest'
-      run: cargo build --release
-
-    # Create Windows Release
-    - name: Create Windows Release
-      if: matrix.os == 'windows-latest'
-      run: |
-        VERSION=$(echo ${{ env.VERSION }})
-        mkdir -p release
-        cp target/release/db-migrator.exe release/db-migrator-${VERSION}.exe
-        cd release
-        tar czvf db-migrator-${VERSION}-windows.tar.gz db-migrator-${VERSION}.exe
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    # Upload Release Artifacts
-    - name: Upload Release Artifacts
-      uses: actions/upload-artifact@v2
-      with:
-        name: db-migrator-artifacts
-        path: release
-
-    # Create GitHub Release
-    - name: Create GitHub Release
-      id: create_release
-      uses: softprops/action-gh-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        files: |
-          release/db-migrator-${{ env.VERSION }}-macos.tar.gz
-          release/db-migrator-${{ env.VERSION }}-windows.tar.gz
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ${{ env.ASSET }}
