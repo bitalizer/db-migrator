@@ -51,15 +51,33 @@ impl DatabaseExtractor {
     pub async fn get_table_schema(&mut self, table: &str) -> Result<Vec<ColumnSchema>> {
         let mut conn = self.pool.get().await?;
 
-        let query = format!(
-            "SELECT
-            COLUMN_NAME,
-            DATA_TYPE,
-            CHARACTER_MAXIMUM_LENGTH,
-            NUMERIC_PRECISION,
-            NUMERIC_SCALE
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_NAME = '{}'",
+        let query = format !(
+            "SELECT 
+                c.COLUMN_NAME,
+                c.DATA_TYPE,
+                c.CHARACTER_MAXIMUM_LENGTH,
+                c.NUMERIC_PRECISION,
+                c.NUMERIC_SCALE,
+                c.IS_NULLABLE,
+                (
+                    SELECT CASE 
+                        WHEN tc.CONSTRAINT_TYPE = 'PRIMARY KEY' THEN 'PRIMARY KEY'
+                        WHEN tc.CONSTRAINT_TYPE = 'FOREIGN KEY' THEN 'FOREIGN KEY,' + c.COLUMN_NAME + ',' + rcf.TABLE_NAME + ',' + rcf.COLUMN_NAME            WHEN tc.CONSTRAINT_TYPE = 'UNIQUE' THEN 'UNIQUE'
+                        WHEN cc.CHECK_CLAUSE IS NOT NULL THEN 'CHECK (' + cc.CHECK_CLAUSE + ')'
+                        WHEN c.COLUMN_DEFAULT IS NOT NULL THEN 'DEFAULT ' + c.COLUMN_DEFAULT
+                        ELSE ''
+                    END
+                    FROM INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE ccu 
+                    LEFT JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc ON ccu.CONSTRAINT_CATALOG = tc.CONSTRAINT_CATALOG AND ccu.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA AND ccu.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+                    LEFT JOIN INFORMATION_SCHEMA.CHECK_CONSTRAINTS cc ON tc.CONSTRAINT_CATALOG = cc.CONSTRAINT_CATALOG AND tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA AND tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME
+                    LEFT JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc ON tc.CONSTRAINT_CATALOG = rc.CONSTRAINT_CATALOG AND tc.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA AND tc.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+                    LEFT JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE ccu_ref ON rc.UNIQUE_CONSTRAINT_CATALOG = ccu_ref.CONSTRAINT_CATALOG AND rc.UNIQUE_CONSTRAINT_SCHEMA = ccu_ref.CONSTRAINT_SCHEMA AND rc.UNIQUE_CONSTRAINT_NAME = ccu_ref.CONSTRAINT_NAME
+                    LEFT JOIN INFORMATION_SCHEMA.COLUMNS rcf ON ccu_ref.TABLE_CATALOG = rcf.TABLE_CATALOG AND ccu_ref.TABLE_SCHEMA = rcf.TABLE_SCHEMA AND ccu_ref.TABLE_NAME = rcf.TABLE_NAME AND ccu_ref.COLUMN_NAME = rcf.COLUMN_NAME
+                    WHERE ccu.TABLE_NAME = c.TABLE_NAME AND ccu.COLUMN_NAME = c.COLUMN_NAME
+                ) AS CONSTRAINTS
+            FROM 
+                INFORMATION_SCHEMA.COLUMNS c       
+            WHERE c.TABLE_NAME = '{}';",
             table
         );
 
@@ -67,14 +85,9 @@ impl DatabaseExtractor {
 
         let schema = rows
             .into_iter()
-            .map(|r| ColumnSchema {
-                column_name: Column::get(&r, "COLUMN_NAME"),
-                data_type: Column::get(&r, "DATA_TYPE"),
-                character_maximum_length: Column::get(&r, "CHARACTER_MAXIMUM_LENGTH"),
-                numeric_precision: Column::get(&r, "NUMERIC_PRECISION"),
-                numeric_scale: Column::get(&r, "NUMERIC_SCALE"),
-            })
-            .collect();
+            .map(|r| ColumnSchema::from_row(&r))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         Ok(schema)
     }
@@ -250,50 +263,4 @@ fn from_sec_fragments(seconds_fragments: i64) -> NaiveTime {
         milliseconds_remainder as u32,
     )
     .expect("Invalid time components")
-}
-
-pub trait Column {
-    fn get(row: &Row, col_name: &str) -> Self;
-}
-
-impl Column for i32 {
-    fn get(row: &Row, col_name: &str) -> i32 {
-        match row.try_get::<i32, _>(col_name) {
-            Ok(Some(value)) => value,
-            _ => panic!("Failed to get column value"),
-        }
-    }
-}
-
-impl Column for Option<i32> {
-    fn get(row: &Row, col_name: &str) -> Option<i32> {
-        row.get::<i32, _>(col_name)
-    }
-}
-
-impl Column for Option<u8> {
-    fn get(row: &Row, col_name: &str) -> Option<u8> {
-        row.get::<u8, _>(col_name)
-    }
-}
-
-impl Column for Option<i64> {
-    fn get(row: &Row, col_name: &str) -> Option<i64> {
-        row.get::<i64, _>(col_name)
-    }
-}
-
-impl Column for String {
-    fn get(row: &Row, col_name: &str) -> String {
-        row.try_get::<&str, _>(col_name)
-            .unwrap_or_default()
-            .unwrap_or_default()
-            .to_string()
-    }
-}
-
-impl Column for Option<String> {
-    fn get(row: &Row, col_name: &str) -> Option<String> {
-        row.get::<&str, _>(col_name).map(|data| data.to_string())
-    }
 }

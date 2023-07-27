@@ -67,27 +67,40 @@ impl DatabaseInserter {
         let columns: Result<Vec<String>> = schema
             .iter()
             .map(|column| {
-                let mut type_properties = String::new();
+                let mut result_str = String::new();
 
+                result_str.push_str(&column.column_name);
+                result_str.push(' '); // Add a space after column_name
+
+                result_str.push_str(&column.data_type);
                 if let Some(max_length) = column.character_maximum_length {
-                    type_properties.push_str(&format!("({})", max_length));
+                    result_str.push_str(&format!("({})", max_length));
                 } else if let Some(precision) = column.numeric_precision {
                     if let Some(scale) = column.numeric_scale {
-                        type_properties.push_str(&format!("({}, {})", precision, scale));
+                        result_str.push_str(&format!("({}, {})", precision, scale));
                     } else {
-                        type_properties.push_str(&format!("({})", precision));
+                        result_str.push_str(&format!("({})", precision));
                     }
                 }
-                Ok(format!(
-                    "{} {}{}",
-                    column.column_name, column.data_type, type_properties
-                ))
+
+                result_str.push(' '); // Add a space after data_type and type_properties
+
+                let nullable_property = if column.is_nullable {
+                    "NULL"
+                } else {
+                    "NOT NULL"
+                };
+                result_str.push_str(nullable_property);
+
+                Ok(result_str)
             })
             .collect();
 
         let columns = columns?;
 
         let create_table_query = format!("CREATE TABLE `{}` ({})", table_name, columns.join(", "));
+
+        println!("{}", create_table_query);
 
         Ok(create_table_query)
     }
