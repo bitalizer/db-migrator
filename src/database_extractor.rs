@@ -62,7 +62,8 @@ impl DatabaseExtractor {
                 (
                     SELECT CASE 
                         WHEN tc.CONSTRAINT_TYPE = 'PRIMARY KEY' THEN 'PRIMARY KEY'
-                        WHEN tc.CONSTRAINT_TYPE = 'FOREIGN KEY' THEN 'FOREIGN KEY,' + c.COLUMN_NAME + ',' + rcf.TABLE_NAME + ',' + rcf.COLUMN_NAME            WHEN tc.CONSTRAINT_TYPE = 'UNIQUE' THEN 'UNIQUE'
+                        WHEN tc.CONSTRAINT_TYPE = 'FOREIGN KEY' THEN 'FOREIGN KEY,' + rcf.TABLE_NAME + ',' + rcf.COLUMN_NAME   
+                        WHEN tc.CONSTRAINT_TYPE = 'UNIQUE' THEN 'UNIQUE'
                         WHEN cc.CHECK_CLAUSE IS NOT NULL THEN 'CHECK (' + cc.CHECK_CLAUSE + ')'
                         WHEN c.COLUMN_DEFAULT IS NOT NULL THEN 'DEFAULT ' + c.COLUMN_DEFAULT
                         ELSE ''

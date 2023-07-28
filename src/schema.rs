@@ -4,7 +4,6 @@ use tiberius::Row;
 pub enum Constraint {
     PrimaryKey,
     ForeignKey {
-        column_name: String,
         referenced_table: String,
         referenced_column: String,
     },
@@ -19,13 +18,11 @@ impl Constraint {
             Ok(Some(Constraint::PrimaryKey))
         } else if s.starts_with("FOREIGN KEY") {
             let parts: Vec<&str> = s.split(',').map(|p| p.trim()).collect();
-            if parts.len() == 4 {
-                let column_name = parts[1].to_string();
-                let referenced_table = parts[2].trim_matches('`').to_string();
-                let referenced_column = parts[3].trim_matches('`').to_string();
+            if parts.len() == 3 {
+                let referenced_table = parts[1].to_string();
+                let referenced_column = parts[2].to_string();
 
                 Ok(Some(Constraint::ForeignKey {
-                    column_name,
                     referenced_table,
                     referenced_column,
                 }))

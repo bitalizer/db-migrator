@@ -3,7 +3,7 @@ use crate::database_extractor::{fetch_table_data, DatabaseExtractor};
 use crate::database_inserter::DatabaseInserter;
 use crate::helpers::format_snake_case;
 use crate::mappings::Mappings;
-use crate::schema::ColumnSchema;
+use crate::schema::{ColumnSchema, Constraint};
 use anyhow::{bail, Context, Result};
 
 use futures::future::join_all;
@@ -22,6 +22,11 @@ pub struct DatabaseMigrator {
     settings: SettingsConfig,
     mappings: Mappings,
     max_concurrent_tasks: usize,
+}
+
+struct MigrationResult {
+    table_name: String,
+    schema: Vec<ColumnSchema>,
 }
 
 impl DatabaseMigrator {
@@ -91,7 +96,7 @@ pub async fn migrate_tables(
     let semaphore = Arc::new(Semaphore::new(max_concurrent_tasks));
 
     // Spawn a task for each table to fetch the rows concurrently
-    let mut tasks = vec![];
+    let mut migration_tasks = vec![];
 
     // Spawn a task for each table to fetch the rows concurrently
     for table in tables {
@@ -111,19 +116,31 @@ pub async fn migrate_tables(
                 .await
                 .expect("Failed to acquire semaphore permit");
 
-            migrate_table(&extractor, &mut inserter, &mappings, &settings, &table)
+            let result = migrate_table(&extractor, &mut inserter, &mappings, &settings, &table)
                 .await
-                .expect("Failed to migrate table");
+                .expect("Failed to migrate");
 
-            // Release the semaphore permit when the task is done
+            // Release the semaphore permit when the task is done successfully
             drop(permit);
+            Ok(result)
         });
 
-        tasks.push(task);
+        migration_tasks.push(task);
     }
 
     // Wait for all tasks to complete
-    join_all(tasks).await;
+    let migration_results: Vec<Result<MigrationResult>> = join_all(migration_tasks).await;
+
+    // Step 3: Run alter table constraints for each migration result using map
+    let alter_table_tasks: Vec<_> = migration_results
+        .iter()
+        .map(|migration_result| {
+            inserter.alter_table_constraints(&migration_result.table_name, &migration_result.schema)
+        })
+        .collect();
+
+    // Step 4: Wait for all alter table tasks to complete using join_all
+    join_all(alter_table_tasks).await;
 
     let end_time = Instant::now();
 
@@ -141,7 +158,7 @@ async fn migrate_table(
     mappings: &Mappings,
     settings: &SettingsConfig,
     table_name: &String,
-) -> Result<()> {
+) -> Result<MigrationResult> {
     info!("Migrating table: {}", table_name);
 
     let start_time = Instant::now();
@@ -158,7 +175,6 @@ async fn migrate_table(
     let mapped_schema = map_table_schema(mappings, &table_schema, settings.format_snake_case);
 
     // Create or truncate in the output database
-
     inserter
         .create_or_truncate_table(&output_table_name, &mapped_schema, settings.reset_tables)
         .await?;
@@ -182,7 +198,10 @@ async fn migrate_table(
         end_time.saturating_duration_since(start_time).as_secs_f32()
     );
 
-    Ok(())
+    Ok(MigrationResult {
+        table_name: output_table_name,
+        schema: mapped_schema,
+    })
 }
 
 async fn migrate_table_rows(
@@ -303,7 +322,24 @@ fn map_table_schema(
                 column.column_name.clone()
             };
 
+            let new_constraints = column.constraints.clone();
             let new_data_type = mapping.to_type.clone();
+
+            // Check if new_constraints contain foreign key and format snake case
+            let updated_constraints = if let Some(new_constraints) = new_constraints {
+                match new_constraints {
+                    Constraint::ForeignKey {
+                        referenced_table,
+                        referenced_column,
+                    } if format => Some(Constraint::ForeignKey {
+                        referenced_table: format_snake_case(&referenced_table),
+                        referenced_column: format_snake_case(&referenced_column),
+                    }),
+                    other_constraint => Some(other_constraint),
+                }
+            } else {
+                None
+            };
 
             let (new_characters_maximum_length, new_numeric_precision, new_numeric_scale) =
                 if !mapping.type_parameters {
@@ -345,6 +381,8 @@ fn map_table_schema(
                 character_maximum_length: new_characters_maximum_length,
                 numeric_precision: new_numeric_precision,
                 numeric_scale: new_numeric_scale,
+                is_nullable: column.is_nullable,
+                constraints: updated_constraints,
             }
         })
         .collect()

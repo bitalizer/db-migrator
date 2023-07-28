@@ -1,4 +1,4 @@
-use crate::schema::ColumnSchema;
+use crate::schema::{ColumnSchema, Constraint};
 
 use anyhow::Result;
 use sqlx::{Acquire, Executor, MySqlPool};
@@ -37,11 +37,30 @@ impl DatabaseInserter {
     async fn create_table(&mut self, table_name: &str, schema: &[ColumnSchema]) -> Result<()> {
         let create_table_query = &self.build_create_table_query(table_name, schema)?;
 
-        info!("Creating table {}", table_name);
+        debug!("Creating table {}", table_name);
 
         sqlx::query(create_table_query).execute(&self.pool).await?;
 
         info!("Table {} created successfully", table_name);
+
+        Ok(())
+    }
+
+    pub(crate) async fn alter_table_constraints(
+        &mut self,
+        table_name: &str,
+        schema: &[ColumnSchema],
+    ) -> Result<()> {
+        let alter_table_query = build_alter_table_query(table_name, schema);
+
+        if let Some(query) = &alter_table_query {
+            // Print the alter_table_query for debugging purposes
+            debug!("Altering table {} with query: {}", table_name, query);
+
+            sqlx::query(query).execute(&self.pool).await?;
+
+            info!("Table {} constraints created successfully", table_name);
+        }
 
         Ok(())
     }
@@ -97,10 +116,7 @@ impl DatabaseInserter {
             .collect();
 
         let columns = columns?;
-
         let create_table_query = format!("CREATE TABLE `{}` ({})", table_name, columns.join(", "));
-
-        println!("{}", create_table_query);
 
         Ok(create_table_query)
     }
@@ -149,4 +165,37 @@ impl DatabaseInserter {
 
         Ok(count > 0)
     }
+}
+
+pub fn build_alter_table_query(table_name: &str, schema: &[ColumnSchema]) -> Option<String> {
+    let constraints: Vec<String> = schema
+        .iter()
+        .filter_map(|column| {
+            if let Some(constraints) = &column.constraints {
+                Some(match constraints {
+                    Constraint::PrimaryKey => format!("ADD PRIMARY KEY(`{}`)", column.column_name),
+                    Constraint::ForeignKey {
+                        referenced_table,
+                        referenced_column,
+                    } => format!(
+                        "ADD FOREIGN KEY(`{}`) REFERENCES `{}`(`{}`)",
+                        column.column_name, referenced_table, referenced_column
+                    ),
+                    Constraint::Unique => format!("ADD UNIQUE(`{}`)", column.column_name),
+                    Constraint::Check(check_clause) => format!("ADD CHECK ({})", check_clause),
+                    Constraint::Default(default_value) => format!("ADD DEFAULT {}", default_value),
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if constraints.is_empty() {
+        return None;
+    }
+
+    let alter_table_query = format!("ALTER TABLE `{}` {}", table_name, constraints.join(", "));
+
+    Some(alter_table_query)
 }
