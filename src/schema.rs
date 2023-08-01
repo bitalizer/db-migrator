@@ -1,6 +1,6 @@
 use tiberius::Row;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Constraint {
     PrimaryKey,
     ForeignKey {
@@ -43,7 +43,7 @@ impl Constraint {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ColumnSchema {
     pub column_name: String,
     pub data_type: String,

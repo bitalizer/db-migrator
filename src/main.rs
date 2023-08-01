@@ -1,3 +1,15 @@
+#[macro_use]
+extern crate log;
+
+use std::io::Write;
+use std::{env, fs, thread};
+
+use anyhow::{Context, Result};
+use chrono::Local;
+use env_logger::Env;
+use structopt::StructOpt;
+use toml::Value;
+
 use crate::config::{Config, SettingsConfig};
 use crate::connection::{DatabaseConnectionFactory, SqlxMySqlConnection, TiberiusConnection};
 use crate::database_extractor::DatabaseExtractor;
@@ -5,13 +17,6 @@ use crate::database_inserter::DatabaseInserter;
 use crate::database_migrator::DatabaseMigrator;
 use crate::mappings::Mappings;
 use crate::options::Options;
-use anyhow::{Context, Result};
-use chrono::Local;
-use env_logger::Env;
-use std::io::Write;
-use std::{env, fs, thread};
-use structopt::StructOpt;
-use toml::Value;
 
 mod config;
 mod connection;
@@ -21,10 +26,8 @@ mod database_migrator;
 mod helpers;
 mod mappings;
 mod options;
+mod query;
 mod schema;
-
-#[macro_use]
-extern crate log;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
