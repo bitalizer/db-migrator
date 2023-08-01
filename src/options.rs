@@ -1,12 +1,13 @@
 use std::thread::available_parallelism;
+
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
     name = "DBMigrator",
-    version = "0.2.0",
-    about = "A Rust project to migrate MSSQL databases to MySQL, including table structures, column data types, and table data rows.\n\nGitHub: https://github.com/bitalizer/db-migrator",
+    version = env ! ("CARGO_PKG_VERSION"),
+    about = "A Rust project to migrate MSSQL databases to MySQL, including table structures, column data types, constraints and table data rows.\n\nGitHub: https://github.com/bitalizer/db-migrator",
     setting = AppSettings::ColoredHelp,
 )]
 pub struct Options {
