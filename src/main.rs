@@ -10,14 +10,15 @@ use env_logger::Env;
 use structopt::StructOpt;
 use toml::Value;
 
+use crate::args::Args;
 use crate::config::{Config, SettingsConfig};
 use crate::connection::{DatabaseConnectionFactory, SqlxMySqlConnection, TiberiusConnection};
 use crate::database_extractor::DatabaseExtractor;
 use crate::database_inserter::DatabaseInserter;
-use crate::database_migrator::DatabaseMigrator;
+use crate::database_migrator::{DatabaseMigrator, MigrationOptions};
 use crate::mappings::Mappings;
-use crate::options::Options;
 
+mod args;
 mod config;
 mod connection;
 mod database_extractor;
@@ -25,7 +26,6 @@ mod database_inserter;
 mod database_migrator;
 mod helpers;
 mod mappings;
-mod options;
 mod query;
 mod schema;
 
@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
 }
 
 async fn init() -> Result<()> {
-    let options = Options::from_args();
+    let options = Args::from_args();
 
     initialize_logger(options.verbose, options.quiet);
 
@@ -58,9 +58,9 @@ async fn init() -> Result<()> {
     run_migration(
         tiberius_connection,
         sqlx_connection,
-        config.settings().clone(),
         mappings,
-        options.concurrency(),
+        config.settings().clone(),
+        options,
     )
     .await?;
 
@@ -84,20 +84,23 @@ async fn create_sqlx_connection(config: &Config) -> Result<SqlxMySqlConnection> 
 async fn run_migration(
     tiberius_connection: TiberiusConnection,
     sqlx_connection: SqlxMySqlConnection,
-    settings: SettingsConfig,
     mappings: Mappings,
-    max_concurrent_tasks: usize,
+    settings: SettingsConfig,
+    options: Args,
 ) -> Result<()> {
     let extractor = DatabaseExtractor::new(tiberius_connection.pool);
     let inserter = DatabaseInserter::new(sqlx_connection.pool);
 
-    let mut migrator = DatabaseMigrator::new(
-        extractor,
-        inserter,
-        settings,
-        mappings,
-        max_concurrent_tasks,
-    );
+    let migration_options = MigrationOptions {
+        drop: options.drop,
+        constraints: options.constraints,
+        format_snake_case: options.format,
+        max_concurrent_tasks: 4,
+        max_packet_bytes: settings.max_packet_bytes,
+        whitelisted_tables: settings.whitelisted_tables,
+    };
+
+    let mut migrator = DatabaseMigrator::new(extractor, inserter, mappings, migration_options);
 
     let migration_result = migrator.run().await.with_context(|| "Migration failed");
 
