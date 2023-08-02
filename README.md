@@ -50,9 +50,31 @@ cargo run --release
 3. Copy the `config.example.toml` file to `config.toml`.
 4. Configure the connection details and whitelisted tables for the MSSQL and MySQL databases in the `config.toml` file.
 
+### Arguments
+
+```shell
+USAGE:
+    db-migrator.exe [FLAGS] [OPTIONS]
+
+FLAGS:
+    -c, --constraints    Create constraints
+    -d, --drop           Drop tables before migration
+    -f, --format         Format snake case table and column names
+    -h, --help           Prints help information
+    -q, --quiet          Activate quiet mode
+    -V, --version        Prints version information
+    -v, --verbose        Activate verbose mode
+
+OPTIONS:
+    -p, --parallelism <parallelism>    Set parallelism [default: LOGICAL_CORES]
+
+
+```
+
 ## Installation
 
-Make sure you have Rust installed. You can install Rust from the official website: https://www.rust-lang.org/tools/install
+Make sure you have Rust installed. You can install Rust from the official
+website: https://www.rust-lang.org/tools/install
 
 Clone the repository:
 
