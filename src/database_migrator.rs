@@ -9,7 +9,6 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use crate::config::SettingsConfig;
 use crate::database_extractor::{open_row_stream, DatabaseExtractor};
 use crate::database_inserter::DatabaseInserter;
 use crate::helpers::{format_snake_case, print_error_chain};
@@ -20,9 +19,18 @@ use crate::schema::{ColumnSchema, Constraint};
 pub struct DatabaseMigrator {
     extractor: DatabaseExtractor,
     inserter: DatabaseInserter,
-    settings: SettingsConfig,
     mappings: Mappings,
-    max_concurrent_tasks: usize,
+    options: MigrationOptions,
+}
+
+#[derive(Debug, Clone)]
+pub struct MigrationOptions {
+    pub(crate) drop: bool,
+    pub(crate) constraints: bool,
+    pub(crate) format_snake_case: bool,
+    pub(crate) max_concurrent_tasks: usize,
+    pub(crate) max_packet_bytes: usize,
+    pub(crate) whitelisted_tables: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -36,23 +44,21 @@ impl DatabaseMigrator {
     pub fn new(
         extractor: DatabaseExtractor,
         inserter: DatabaseInserter,
-        settings: SettingsConfig,
         mappings: Mappings,
-        max_concurrent_tasks: usize,
+        options: MigrationOptions,
     ) -> Self {
         DatabaseMigrator {
             extractor,
             inserter,
-            settings,
             mappings,
-            max_concurrent_tasks,
+            options,
         }
     }
 
     pub async fn run(&mut self) -> Result<()> {
         info!("Running table migrator");
 
-        let config_send_packet_size = self.settings.max_packet_bytes;
+        let config_send_packet_size = self.options.max_packet_bytes;
         let max_allowed_packet = self.inserter.get_max_allowed_packet().await?;
 
         check_packet_size(config_send_packet_size, max_allowed_packet).await?;
@@ -63,19 +69,19 @@ impl DatabaseMigrator {
     }
 
     pub async fn migrate_tables(&mut self) -> Result<()> {
-        // Fetch the list of tables
         let start_time = Instant::now();
-        let mut tables = self.extractor.fetch_tables().await?;
-        let formatted_tables = format_table_names(&tables, self.settings.format_snake_case);
+
+        let mut tables = self.extractor.fetch_tables().await?; // Fetch the list of tables from input database
+        let formatted_tables = format_table_names(&tables, self.options.format_snake_case); // Format to snake case if required
 
         if tables.is_empty() {
             bail!("No tables to process");
         }
 
-        check_missing_tables(&tables, &self.settings.whitelisted_tables);
+        check_missing_tables(&tables, &self.options.whitelisted_tables);
 
         // Filter and keep only the whitelisted tables
-        tables.retain(|table| self.settings.whitelisted_tables.contains(table));
+        tables.retain(|table| self.options.whitelisted_tables.contains(table));
 
         if tables.is_empty() {
             bail!("No tables to process after filtering whitelisted tables");
@@ -83,7 +89,7 @@ impl DatabaseMigrator {
 
         info!("Tables to migrate: {}", tables.join(", "));
 
-        if self.settings.reset_tables {
+        if self.options.drop {
             info!("Dropping tables");
             self.inserter.drop_tables(&formatted_tables).await?;
         }
@@ -115,20 +121,10 @@ impl DatabaseMigrator {
             }
         }
 
-        // Step 3: Run alter table constraints for each migration result using map
-        let alter_table_tasks: Vec<_> = successful_results
-            .iter()
-            .filter(|migration_result| migration_result.created) // Filter only MigrationResult items where created is true
-            .map(|migration_result| {
-                let mut inserter = self.inserter.clone(); // Clone the inserter for each task
-                let table_name = migration_result.table_name.clone();
-                let schema = migration_result.schema.clone();
-                spawn(async move { inserter.create_constraints(&table_name, &schema).await })
-            })
-            .collect();
-
-        // Step 4: Wait for all alter table tasks to complete using join_all
-        join_all(alter_table_tasks).await;
+        if self.options.constraints {
+            let constraints_tasks = self.create_constraints_tasks(successful_results).await;
+            join_all(constraints_tasks).await;
+        }
 
         let end_time = Instant::now();
 
@@ -145,7 +141,7 @@ impl DatabaseMigrator {
         tables: Vec<String>,
     ) -> Result<Vec<JoinHandle<Result<MigrationResult, Error>>>> {
         // Create a semaphore to limit the number of concurrent tasks
-        let semaphore = Arc::new(Semaphore::new(self.max_concurrent_tasks));
+        let semaphore = Arc::new(Semaphore::new(self.options.max_concurrent_tasks));
 
         // Create a Vec to store the JoinHandles for tasks
         let mut migration_tasks = Vec::new();
@@ -158,7 +154,7 @@ impl DatabaseMigrator {
             let mut extractor = self.extractor.clone();
             let mut inserter = self.inserter.clone();
             let mappings = self.mappings.clone();
-            let settings = self.settings.clone();
+            let options = self.options.clone();
 
             // Spawn a task for each table
             let task = spawn(async move {
@@ -169,7 +165,7 @@ impl DatabaseMigrator {
                     .expect("Failed to acquire semaphore permit");
 
                 let result =
-                    migrate_table(&mut extractor, &mut inserter, &mappings, &settings, &table)
+                    migrate_table(&mut extractor, &mut inserter, &mappings, &options, &table)
                         .await
                         .with_context(|| format!("Error while migrating table: {}", table));
 
@@ -183,16 +179,39 @@ impl DatabaseMigrator {
 
         Ok(migration_tasks)
     }
+
+    async fn create_constraints_tasks(
+        &mut self,
+        successful_results: Vec<MigrationResult>,
+    ) -> Vec<JoinHandle<()>> {
+        successful_results
+            .into_iter()
+            .filter(|migration_result| migration_result.created) // Filter only MigrationResult items where created is true
+            .map(|migration_result| {
+                let mut inserter = self.inserter.clone(); // Clone the inserter for each task
+                let table_name = migration_result.table_name;
+                let schema = migration_result.schema;
+                spawn(async move {
+                    let _ = inserter
+                        .create_constraints(&table_name, &schema)
+                        .await
+                        .with_context(|| {
+                            format!("Error while creating constraints for table: {}", table_name)
+                        });
+                })
+            })
+            .collect()
+    }
 }
 
 async fn migrate_table(
     extractor: &mut DatabaseExtractor,
     inserter: &mut DatabaseInserter,
     mappings: &Mappings,
-    settings: &SettingsConfig,
+    options: &MigrationOptions,
     table_name: &str,
 ) -> Result<MigrationResult, Error> {
-    let output_table_name: String = if settings.format_snake_case {
+    let output_table_name: String = if options.format_snake_case {
         format_snake_case(table_name)
     } else {
         table_name.to_string()
@@ -208,7 +227,7 @@ async fn migrate_table(
         .await
         .with_context(|| "Failed to get table schema".to_string())?;
 
-    let mapped_schema = map_table_schema(mappings, &table_schema, settings.format_snake_case);
+    let mapped_schema = map_table_schema(mappings, &table_schema, options.format_snake_case);
 
     let table_exists = inserter
         .table_exists(&output_table_name)
@@ -227,7 +246,7 @@ async fn migrate_table(
     let migrated_count = migrate_table_rows(
         extractor.clone(),
         inserter,
-        settings.clone(),
+        options,
         table_name,
         &output_table_name,
         &mapped_schema,
@@ -257,7 +276,7 @@ async fn migrate_table(
 async fn migrate_table_rows(
     extractor: DatabaseExtractor,
     inserter: &mut DatabaseInserter,
-    settings: SettingsConfig,
+    settings: &MigrationOptions,
     input_table: &str,
     output_table: &str,
     mapped_schema: &[ColumnSchema],

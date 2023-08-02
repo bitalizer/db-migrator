@@ -371,7 +371,7 @@ dependencies = [
 
 [[package]]
 name = "db-migrator"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "async-trait",
