@@ -42,10 +42,7 @@ impl DatabaseInserter {
         let alter_table_query = build_create_constraints(table_name, schema);
 
         if let Some(query) = &alter_table_query {
-            debug!(
-                "Creating constraints table {} with query: {}",
-                table_name, query
-            );
+            debug!("Creating constraints for table {}", table_name);
 
             let mut connection = self.pool.acquire().await?;
             let mut transaction = connection.begin().await?;
@@ -61,7 +58,7 @@ impl DatabaseInserter {
                 transaction.rollback().await?; // Rollback if the transaction fails
             } else {
                 transaction.commit().await?;
-                info!("Table {} constraints altered successfully", table_name);
+                info!("Table {} constraints created successfully", table_name);
             }
         }
 

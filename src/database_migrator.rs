@@ -6,7 +6,6 @@ use futures::TryStreamExt;
 use log::info;
 use tokio::spawn;
 use tokio::sync::Semaphore;
-use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use crate::database_extractor::{open_row_stream, DatabaseExtractor};
@@ -71,6 +70,41 @@ impl DatabaseMigrator {
     pub async fn migrate_tables(&mut self) -> Result<()> {
         let start_time = Instant::now();
 
+        let (tables, formatted_tables) = self.fetch_and_format_tables().await?;
+
+        let action = if self.options.drop {
+            TableAction::Drop
+        } else {
+            TableAction::Truncate
+        };
+
+        self.inserter
+            .reset_tables(&formatted_tables, action)
+            .await?;
+
+        let migration_results = self.run_migration(tables).await;
+        let (successful_results, errors) = process_migration_results(migration_results).await;
+
+        // Handle errors
+        for err in errors {
+            print_error_chain(&err);
+        }
+
+        if self.options.constraints {
+            self.create_constraints(successful_results).await;
+        }
+
+        let end_time = Instant::now();
+
+        info!(
+            "Migration finished, total time took: {}s",
+            end_time.saturating_duration_since(start_time).as_secs_f32()
+        );
+
+        Ok(())
+    }
+
+    async fn fetch_and_format_tables(&mut self) -> Result<(Vec<String>, Vec<String>)> {
         let mut tables = self.extractor.fetch_tables().await?; // Fetch the list of tables from input database
         let formatted_tables = format_table_names(&tables, self.options.format_snake_case); // Format to snake case if required
 
@@ -89,62 +123,10 @@ impl DatabaseMigrator {
 
         info!("Tables to migrate: {}", tables.join(", "));
 
-        let action = if self.options.drop {
-            TableAction::Drop
-        } else {
-            TableAction::Truncate
-        };
-
-        self.inserter
-            .reset_tables(&formatted_tables, action)
-            .await?;
-
-        let migration_tasks = self.run_migration(tables).await?;
-
-        // Wait for all tasks to complete
-        let migration_results: Vec<Result<MigrationResult, Error>> = join_all(migration_tasks)
-            .await
-            .into_iter()
-            .map(|join_handle_result| join_handle_result.expect("Error in JoinHandle"))
-            .collect();
-
-        // Separate successful results from errors using partition
-        let (successful_results, errors): (Vec<_>, Vec<_>) =
-            migration_results.into_iter().partition(Result::is_ok);
-
-        // Collect only the successful results into a Vec<MigrationResult>
-        let successful_results: Vec<MigrationResult> =
-            successful_results.into_iter().map(Result::unwrap).collect();
-
-        // Handle errors
-        for err in errors {
-            match err {
-                Err(err) => {
-                    print_error_chain(&err);
-                }
-                _ => unreachable!(), // We should have only errors here due to partitioning.
-            }
-        }
-
-        if self.options.constraints {
-            let constraints_tasks = self.create_constraints_tasks(successful_results).await;
-            join_all(constraints_tasks).await;
-        }
-
-        let end_time = Instant::now();
-
-        info!(
-            "Migration finished, total time took: {}s",
-            end_time.saturating_duration_since(start_time).as_secs_f32()
-        );
-
-        Ok(())
+        Ok((tables, formatted_tables))
     }
 
-    async fn run_migration(
-        &mut self,
-        tables: Vec<String>,
-    ) -> Result<Vec<JoinHandle<Result<MigrationResult, Error>>>> {
+    async fn run_migration(&mut self, tables: Vec<String>) -> Vec<Result<MigrationResult, Error>> {
         // Create a semaphore to limit the number of concurrent tasks
         let semaphore = Arc::new(Semaphore::new(self.options.max_concurrent_tasks));
 
@@ -182,30 +164,39 @@ impl DatabaseMigrator {
             migration_tasks.push(task);
         }
 
-        Ok(migration_tasks)
+        let migration_results: Vec<Result<MigrationResult, Error>> = join_all(migration_tasks)
+            .await
+            .into_iter()
+            .map(|join_handle_result| join_handle_result.expect("Error in JoinHandle"))
+            .collect();
+
+        migration_results
     }
 
-    async fn create_constraints_tasks(
-        &mut self,
-        successful_results: Vec<MigrationResult>,
-    ) -> Vec<JoinHandle<()>> {
-        successful_results
+    async fn create_constraints(&mut self, successful_results: Vec<MigrationResult>) {
+        let tasks = successful_results
             .into_iter()
             .filter(|migration_result| migration_result.created) // Filter only MigrationResult items where created is true
             .map(|migration_result| {
                 let mut inserter = self.inserter.clone(); // Clone the inserter for each task
-                let table_name = migration_result.table_name;
-                let schema = migration_result.schema;
+                let table_name = migration_result.table_name.clone(); // Clone the table name to move into the task
+                let schema = migration_result.schema; // Clone the schema to move into the task
+
                 spawn(async move {
-                    let _ = inserter
+                    if let Err(err) = inserter
                         .create_constraints(&table_name, &schema)
                         .await
                         .with_context(|| {
                             format!("Error while creating constraints for table: {}", table_name)
-                        });
+                        })
+                    {
+                        print_error_chain(&err);
+                    }
                 })
             })
-            .collect()
+            .collect::<Vec<_>>();
+
+        join_all(tasks).await;
     }
 }
 
@@ -509,4 +500,20 @@ fn format_table_names(tables: &[String], format: bool) -> Vec<String> {
     } else {
         tables.to_vec()
     }
+}
+
+// Helper function to process migration results and separate successful results from errors
+async fn process_migration_results(
+    migration_results: Vec<Result<MigrationResult, Error>>,
+) -> (Vec<MigrationResult>, Vec<Error>) {
+    let (successful_results, errors): (Vec<_>, Vec<_>) =
+        migration_results.into_iter().partition(Result::is_ok);
+
+    let successful_results: Vec<MigrationResult> =
+        successful_results.into_iter().map(Result::unwrap).collect();
+
+    (
+        successful_results,
+        errors.into_iter().map(Result::unwrap_err).collect(),
+    )
 }
