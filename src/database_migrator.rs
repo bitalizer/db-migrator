@@ -13,7 +13,7 @@ use crate::database_extractor::{open_row_stream, DatabaseExtractor};
 use crate::database_inserter::DatabaseInserter;
 use crate::helpers::{format_snake_case, print_error_chain};
 use crate::mappings::Mappings;
-use crate::query::build_insert_statement;
+use crate::query::{build_insert_statement, TableAction};
 use crate::schema::{ColumnSchema, Constraint};
 
 pub struct DatabaseMigrator {
@@ -89,10 +89,15 @@ impl DatabaseMigrator {
 
         info!("Tables to migrate: {}", tables.join(", "));
 
-        if self.options.drop {
-            info!("Dropping tables");
-            self.inserter.drop_tables(&formatted_tables).await?;
-        }
+        let action = if self.options.drop {
+            TableAction::Drop
+        } else {
+            TableAction::Truncate
+        };
+
+        self.inserter
+            .reset_tables(&formatted_tables, action)
+            .await?;
 
         let migration_tasks = self.run_migration(tables).await?;
 

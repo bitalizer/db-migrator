@@ -1,7 +1,9 @@
 use anyhow::Result;
-use sqlx::{Acquire, Executor, MySqlPool};
+use sqlx::{Acquire, Executor, MySqlPool, Row};
 
-use crate::query::{build_create_constraints, build_create_table_query, build_drop_query};
+use crate::query::{
+    build_create_constraints, build_create_table_query, build_reset_query, TableAction,
+};
 use crate::schema::ColumnSchema;
 
 #[derive(Clone)]
@@ -91,11 +93,35 @@ impl DatabaseInserter {
         Ok(max_allowed_packet as usize)
     }
 
-    pub async fn drop_tables(&mut self, tables: &[String]) -> Result<()> {
-        let drop_tables_query = build_drop_query(tables);
-        self.execute_transactional_query(drop_tables_query.as_str())
+    pub async fn reset_tables(&mut self, tables: &[String], action: TableAction) -> Result<()> {
+        debug!("Resetting tables");
+
+        let mut all_tables = self.get_all_tables().await?;
+
+        // Filter and keep only the tables that exist in the database and are also present in the `tables` slice
+        all_tables.retain(|table| tables.contains(table));
+
+        let reset_tables_query = build_reset_query(&all_tables, &action);
+        self.execute_transactional_query(reset_tables_query.as_str())
             .await?;
+
+        match action {
+            TableAction::Drop => info!("Tables dropped successfully"),
+            TableAction::Truncate => info!("Tables truncated successfully"),
+        }
+
         Ok(())
+    }
+
+    async fn get_all_tables(&mut self) -> Result<Vec<String>> {
+        let rows = sqlx::query("SHOW TABLES").fetch_all(&self.pool).await?;
+
+        let table_names: Vec<String> = rows
+            .iter()
+            .map(|row| row.get::<String, _>(0)) // Get the first column value as a String
+            .collect();
+
+        Ok(table_names)
     }
 
     pub(crate) async fn table_exists(&mut self, table_name: &str) -> Result<bool> {
