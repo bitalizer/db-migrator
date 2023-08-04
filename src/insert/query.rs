@@ -1,4 +1,6 @@
-use crate::schema::{ColumnSchema, Constraint};
+use crate::common::constraints::Constraint;
+use crate::common::schema::ColumnSchema;
+use crate::insert::table_action::TableAction;
 
 pub fn build_insert_statement(table_name: &str, schema: &[ColumnSchema]) -> String {
     let column_names_string = schema
@@ -13,10 +15,16 @@ pub fn build_insert_statement(table_name: &str, schema: &[ColumnSchema]) -> Stri
     )
 }
 
-pub fn build_drop_query(tables: &[String]) -> String {
+pub fn build_reset_query(tables: &[String], action: &TableAction) -> String {
     tables
         .iter()
-        .map(|table_name| format!("DROP TABLE IF EXISTS `{}`;", table_name))
+        .map(|table_name| {
+            format!(
+                "{} TABLE `{}`;",
+                action.to_string().to_uppercase(),
+                table_name
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }

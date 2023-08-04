@@ -13,21 +13,20 @@ use toml::Value;
 use crate::args::Args;
 use crate::config::{Config, SettingsConfig};
 use crate::connection::{DatabaseConnectionFactory, SqlxMySqlConnection, TiberiusConnection};
-use crate::database_extractor::DatabaseExtractor;
-use crate::database_inserter::DatabaseInserter;
-use crate::database_migrator::{DatabaseMigrator, MigrationOptions};
+use crate::extract::extractor::DatabaseExtractor;
+use crate::insert::inserter::DatabaseInserter;
 use crate::mappings::Mappings;
+use crate::migrate::migration_options::MigrationOptions;
+use crate::migrate::migrator::DatabaseMigrator;
 
 mod args;
+mod common;
 mod config;
 mod connection;
-mod database_extractor;
-mod database_inserter;
-mod database_migrator;
-mod helpers;
+mod extract;
+mod insert;
 mod mappings;
-mod query;
-mod schema;
+mod migrate;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
@@ -52,8 +51,9 @@ async fn init() -> Result<()> {
     debug!("Total mappings loaded: {}", mappings.len());
     info!("Initializing connections...");
 
-    let tiberius_connection = create_tiberius_connection(&config).await?;
-    let sqlx_connection = create_sqlx_connection(&config).await?;
+    let max_connections = options.parallelism as u32;
+    let tiberius_connection = create_tiberius_connection(&config, max_connections).await?;
+    let sqlx_connection = create_sqlx_connection(&config, max_connections).await?;
 
     run_migration(
         tiberius_connection,
@@ -67,17 +67,23 @@ async fn init() -> Result<()> {
     Ok(())
 }
 
-async fn create_tiberius_connection(config: &Config) -> Result<TiberiusConnection> {
+async fn create_tiberius_connection(
+    config: &Config,
+    max_connections: u32,
+) -> Result<TiberiusConnection> {
     let tiberius_factory =
         DatabaseConnectionFactory::<TiberiusConnection>::new(config.mssql_database().clone());
-    let tiberius_connection = tiberius_factory.create_connection().await?;
+    let tiberius_connection = tiberius_factory.create_connection(max_connections).await?;
     Ok(tiberius_connection)
 }
 
-async fn create_sqlx_connection(config: &Config) -> Result<SqlxMySqlConnection> {
+async fn create_sqlx_connection(
+    config: &Config,
+    max_connections: u32,
+) -> Result<SqlxMySqlConnection> {
     let sqlx_factory =
         DatabaseConnectionFactory::<SqlxMySqlConnection>::new(config.mysql_database().clone());
-    let sqlx_connection = sqlx_factory.create_connection().await?;
+    let sqlx_connection = sqlx_factory.create_connection(max_connections).await?;
     Ok(sqlx_connection)
 }
 
@@ -95,7 +101,7 @@ async fn run_migration(
         drop: options.drop,
         constraints: options.constraints,
         format_snake_case: options.format,
-        max_concurrent_tasks: 4,
+        max_concurrent_tasks: options.parallelism,
         max_packet_bytes: settings.max_packet_bytes,
         whitelisted_tables: settings.whitelisted_tables,
     };
@@ -125,7 +131,7 @@ fn initialize_logger(verbose: bool, quiet: bool) {
     // Initialize the logger with the desired format and additional configuration
     env_logger::Builder::from_env(Env::default().default_filter_or("info"))
         .filter_module("tiberius", log::LevelFilter::Error)
-        .filter_module("sqlx", log::LevelFilter::Warn)
+        .filter_module("sqlx", log::LevelFilter::Error)
         .format(|buf, record| {
             let timestamp = Local::now().format("%H:%M:%S");
 

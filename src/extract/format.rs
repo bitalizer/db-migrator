@@ -1,48 +1,36 @@
-use anyhow::Error;
 use chrono::DateTime as ChronosDateTime;
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use hex::encode;
 use tiberius::numeric::Numeric;
 use tiberius::time::{Date, DateTime, DateTime2, DateTimeOffset, SmallDateTime, Time};
+use tiberius::{ColumnData, Row};
 
-pub fn print_error_chain(err: &Error) {
-    // Concatenate the main context message along with its chain of errors
-    let error_message = err
-        .chain()
-        .enumerate()
-        .map(|(index, cause)| {
-            if index == 0 {
-                cause.to_string()
-            } else {
-                format!("       └> {}", cause)
-            }
-        })
-        .collect::<Vec<String>>()
-        .join("\n");
-
-    // Print the error message
-    error!("{}", error_message);
+pub fn format_row_values(row: Row) -> Vec<String> {
+    row.into_iter().map(format_column_value).collect()
 }
 
-pub fn format_snake_case(column_name: &str) -> String {
-    let mut formatted_name = String::new();
-    let mut prev_char: Option<char> = None;
-
-    for c in column_name.chars() {
-        if c.is_uppercase() {
-            if let Some(prev) = prev_char {
-                if !(prev == '_' || prev.is_uppercase()) {
-                    formatted_name.push('_');
-                }
-            }
-            formatted_name.push(c.to_ascii_lowercase());
-        } else {
-            formatted_name.push(c);
-        }
-
-        prev_char = Some(c);
+pub fn format_column_value(item: ColumnData) -> String {
+    match item {
+        ColumnData::Binary(Some(val)) => format!("'0x{}'", encode(val)),
+        ColumnData::Binary(None) => "NULL".to_string(),
+        ColumnData::Bit(val) => val.unwrap_or_default().to_string(),
+        ColumnData::I16(val) => format_number_value(val),
+        ColumnData::I32(val) => format_number_value(val),
+        ColumnData::I64(val) => format_number_value(val),
+        ColumnData::F32(val) => format_string_value(val),
+        ColumnData::F64(val) => format_string_value(val),
+        ColumnData::Guid(val) => format_string_value(val),
+        ColumnData::Numeric(val) => format_numeric_value(val),
+        ColumnData::String(val) => format_string_value(val),
+        ColumnData::Time(ref val) => format_time(val),
+        ColumnData::Date(ref val) => format_date(val),
+        ColumnData::SmallDateTime(ref val) => format_small_datetime(val),
+        ColumnData::DateTime(ref val) => format_datetime(val),
+        ColumnData::DateTime2(ref val) => format_datetime2(val),
+        ColumnData::DateTimeOffset(ref val) => format_datetime_offset(val),
+        ColumnData::U8(val) => val.unwrap_or_default().to_string(),
+        ColumnData::Xml(val) => val.unwrap().as_ref().to_string(),
     }
-
-    formatted_name
 }
 
 pub fn format_numeric_value(value: Option<Numeric>) -> String {
@@ -121,7 +109,7 @@ pub fn format_small_datetime(val: &Option<SmallDateTime>) -> String {
     val.map(|dt| {
         let datetime = NaiveDateTime::new(
             from_days(dt.days() as i64, 1900),
-            from_mins(dt.seconds_fragments() as u32 * 60),
+            from_minutes(dt.seconds_fragments() as u32 * 60),
         );
         datetime.format("'%Y-%m-%d %H:%M:%S'").to_string()
     })
@@ -149,7 +137,7 @@ pub fn from_days(days: i64, base_year: i32) -> NaiveDate {
         + Duration::days(days)
 }
 
-pub fn from_mins(minutes: u32) -> NaiveTime {
+pub fn from_minutes(minutes: u32) -> NaiveTime {
     let hours = minutes / 60;
     let minutes_remainder = minutes % 60;
 
