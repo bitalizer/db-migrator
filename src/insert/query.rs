@@ -1,20 +1,6 @@
-use std::fmt;
-
-use crate::schema::{ColumnSchema, Constraint};
-
-pub enum TableAction {
-    Drop,
-    Truncate,
-}
-
-impl fmt::Display for TableAction {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            TableAction::Drop => write!(f, "DROP"),
-            TableAction::Truncate => write!(f, "TRUNCATE"),
-        }
-    }
-}
+use crate::common::constraints::Constraint;
+use crate::common::schema::ColumnSchema;
+use crate::insert::table_action::TableAction;
 
 pub fn build_insert_statement(table_name: &str, schema: &[ColumnSchema]) -> String {
     let column_names_string = schema

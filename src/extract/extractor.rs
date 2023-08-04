@@ -3,14 +3,9 @@ use bb8::{Pool, PooledConnection};
 use bb8_tiberius::ConnectionManager;
 use futures::stream::{BoxStream, StreamExt};
 use futures::TryStreamExt;
-use hex::encode;
-use tiberius::{ColumnData, Row};
 
-use crate::helpers::{
-    format_date, format_datetime, format_datetime2, format_datetime_offset, format_number_value,
-    format_numeric_value, format_small_datetime, format_string_value, format_time,
-};
-use crate::schema::ColumnSchema;
+use crate::common::schema::ColumnSchema;
+use crate::extract::format::format_row_values;
 
 #[derive(Clone)]
 pub struct DatabaseExtractor {
@@ -97,12 +92,8 @@ impl DatabaseExtractor {
 pub async fn open_row_stream<'a>(
     conn: &'a mut PooledConnection<'_, ConnectionManager>,
     table: &'a str,
-    offset_index: i64,
 ) -> Result<BoxStream<'a, Result<Vec<String>, tiberius::error::Error>>> {
-    let query = format!(
-        "SELECT * FROM [{}] ORDER BY (SELECT NULL) OFFSET {} ROWS",
-        table, offset_index
-    );
+    let query = format!("SELECT * FROM [{}]", table);
     let stream = conn
         .simple_query(query)
         .await?
@@ -111,32 +102,4 @@ pub async fn open_row_stream<'a>(
         .boxed();
 
     Ok(stream)
-}
-
-fn format_row_values(row: Row) -> Vec<String> {
-    row.into_iter().map(format_column_value).collect()
-}
-
-fn format_column_value(item: ColumnData) -> String {
-    match item {
-        ColumnData::Binary(Some(val)) => format!("'0x{}'", encode(val)),
-        ColumnData::Binary(None) => "NULL".to_string(),
-        ColumnData::Bit(val) => val.unwrap_or_default().to_string(),
-        ColumnData::I16(val) => format_number_value(val),
-        ColumnData::I32(val) => format_number_value(val),
-        ColumnData::I64(val) => format_number_value(val),
-        ColumnData::F32(val) => format_string_value(val),
-        ColumnData::F64(val) => format_string_value(val),
-        ColumnData::Guid(val) => format_string_value(val),
-        ColumnData::Numeric(val) => format_numeric_value(val),
-        ColumnData::String(val) => format_string_value(val),
-        ColumnData::Time(ref val) => format_time(val),
-        ColumnData::Date(ref val) => format_date(val),
-        ColumnData::SmallDateTime(ref val) => format_small_datetime(val),
-        ColumnData::DateTime(ref val) => format_datetime(val),
-        ColumnData::DateTime2(ref val) => format_datetime2(val),
-        ColumnData::DateTimeOffset(ref val) => format_datetime_offset(val),
-        ColumnData::U8(val) => val.unwrap_or_default().to_string(),
-        ColumnData::Xml(val) => val.unwrap().as_ref().to_string(),
-    }
 }

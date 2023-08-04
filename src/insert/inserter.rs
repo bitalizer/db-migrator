@@ -1,10 +1,9 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use sqlx::{Acquire, Executor, MySqlPool, Row};
 
-use crate::query::{
-    build_create_constraints, build_create_table_query, build_reset_query, TableAction,
-};
-use crate::schema::ColumnSchema;
+use crate::common::schema::ColumnSchema;
+use crate::insert::query::{build_create_constraints, build_create_table_query, build_reset_query};
+use crate::insert::table_action::TableAction;
 
 #[derive(Clone)]
 pub struct DatabaseInserter {
@@ -16,11 +15,7 @@ impl DatabaseInserter {
         DatabaseInserter { pool }
     }
 
-    pub(crate) async fn create_table(
-        &mut self,
-        table_name: &str,
-        schema: &[ColumnSchema],
-    ) -> Result<()> {
+    pub async fn create_table(&mut self, table_name: &str, schema: &[ColumnSchema]) -> Result<()> {
         let create_table_query = build_create_table_query(table_name, schema);
 
         debug!("Creating table {}", table_name);
@@ -34,7 +29,7 @@ impl DatabaseInserter {
         Ok(())
     }
 
-    pub(crate) async fn create_constraints(
+    pub async fn create_constraints(
         &mut self,
         table_name: &str,
         schema: &[ColumnSchema],
@@ -71,14 +66,16 @@ impl DatabaseInserter {
 
         transaction.execute("SET FOREIGN_KEY_CHECKS=0").await?;
 
-        if let Err(err) = transaction.execute(query).await {
+        if let Err(_err) = transaction.execute(query).await {
             transaction.rollback().await?;
-            return Err(err.into());
+            return Err(anyhow!(
+                "Cannot execute transactional query: {}",
+                &query[..100]
+            ));
         }
 
         transaction.execute("SET FOREIGN_KEY_CHECKS=1").await?;
         transaction.commit().await?;
-
         Ok(())
     }
 
@@ -121,7 +118,7 @@ impl DatabaseInserter {
         Ok(table_names)
     }
 
-    pub(crate) async fn table_exists(&mut self, table_name: &str) -> Result<bool> {
+    pub async fn table_exists(&mut self, table_name: &str) -> Result<bool> {
         let query = format!(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '{}'",
             table_name
@@ -132,7 +129,7 @@ impl DatabaseInserter {
         Ok(count > 0)
     }
 
-    pub(crate) async fn table_rows_count(&mut self, table_name: &str) -> Result<i64> {
+    pub async fn table_rows_count(&mut self, table_name: &str) -> Result<i64> {
         let query = format!("SELECT COUNT(*) FROM `{}`", table_name);
 
         let count: i64 = sqlx::query_scalar(&query).fetch_one(&self.pool).await?;
