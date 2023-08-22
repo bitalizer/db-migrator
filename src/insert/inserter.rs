@@ -70,7 +70,7 @@ impl DatabaseInserter {
             transaction.rollback().await?;
             return Err(anyhow!(
                 "Cannot execute transactional query: {}",
-                &query[..100]
+                &query.chars().take(100).collect::<String>()
             ));
         }
 
