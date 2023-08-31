@@ -67,11 +67,14 @@ impl DatabaseInserter {
         transaction.execute("SET FOREIGN_KEY_CHECKS=0").await?;
 
         if let Err(_err) = transaction.execute(query).await {
+            println!("Error executing query: {:?}", _err);
             transaction.rollback().await?;
-            return Err(anyhow!(
-                "Cannot execute transactional query: {}",
-                &query[..100]
-            ));
+            let preview = if query.is_empty() {
+                "EMPTY QUERY".to_string()
+            } else {
+                query.chars().take(100).collect()
+            };
+            return Err(anyhow!("Cannot execute sanity check: {}", preview));
         }
 
         transaction.execute("SET FOREIGN_KEY_CHECKS=1").await?;
@@ -93,7 +96,7 @@ impl DatabaseInserter {
         })?;
 
         // Filter and keep only the tables that exist in the database and are also present in the `tables` slice
-        all_tables.retain(|table| tables.contains(table));
+        all_tables.retain(|table| tables.iter().any(|t| t.to_lowercase() == table.to_lowercase()));
 
         if all_tables.is_empty() {
             debug!("No tables to reset");
