@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use sqlx::{Acquire, Executor, MySqlPool, Row};
 
 use crate::common::schema::ColumnSchema;
@@ -88,20 +88,27 @@ impl DatabaseInserter {
     }
 
     pub async fn reset_tables(&mut self, tables: &[String], action: TableAction) -> Result<()> {
-        debug!("Resetting tables");
-
-        let mut all_tables = self.get_all_tables().await?;
+        let mut all_tables = self.get_all_tables().await.with_context(|| {
+            "Resetting tables encountered an error, cannot obtain existing tables"
+        })?;
 
         // Filter and keep only the tables that exist in the database and are also present in the `tables` slice
         all_tables.retain(|table| tables.contains(table));
 
-        let reset_tables_query = build_reset_query(&all_tables, &action);
-        self.execute_transactional_query(reset_tables_query.as_str())
-            .await?;
+        if all_tables.is_empty() {
+            debug!("No tables to reset");
+        } else {
+            debug!("Resetting tables");
+            let reset_tables_query = build_reset_query(&all_tables, &action);
 
-        match action {
-            TableAction::Drop => info!("Tables dropped successfully"),
-            TableAction::Truncate => info!("Tables truncated successfully"),
+            self.execute_transactional_query(reset_tables_query.as_str())
+                .await
+                .with_context(|| "Resetting tables encountered an error")?;
+
+            match action {
+                TableAction::Drop => info!("Tables dropped successfully"),
+                TableAction::Truncate => info!("Tables truncated successfully"),
+            }
         }
 
         Ok(())
