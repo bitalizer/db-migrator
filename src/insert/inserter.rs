@@ -68,10 +68,7 @@ impl DatabaseInserter {
 
         if let Err(_err) = transaction.execute(query).await {
             transaction.rollback().await?;
-            return Err(anyhow!(
-                "Cannot execute transactional query: {}",
-                &query[..100]
-            ));
+            return Err(anyhow!("Cannot execute transactional query: {}", &query));
         }
 
         transaction.execute("SET FOREIGN_KEY_CHECKS=1").await?;
