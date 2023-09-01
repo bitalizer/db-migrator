@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use sqlx::{Acquire, Executor, MySqlPool, Row};
 
 use crate::common::schema::ColumnSchema;
@@ -20,9 +20,9 @@ impl DatabaseInserter {
 
         debug!("Creating table {}", table_name);
 
-        sqlx::query(create_table_query.as_str())
-            .execute(&self.pool)
-            .await?;
+        self.execute_transactional_query(create_table_query.as_str())
+            .await
+            .with_context(|| format!("Encountered an error while creating table {}", table_name))?;
 
         info!("Table {} created successfully", table_name);
 
@@ -33,8 +33,9 @@ impl DatabaseInserter {
         &mut self,
         table_name: &str,
         schema: &[ColumnSchema],
+        formatted_tables: &[String],
     ) -> Result<()> {
-        let alter_table_query = build_create_constraints(table_name, schema);
+        let alter_table_query = build_create_constraints(table_name, schema, formatted_tables);
 
         if let Some(query) = &alter_table_query {
             debug!("Creating constraints for table {}", table_name);
@@ -46,7 +47,7 @@ impl DatabaseInserter {
 
             if let Err(err) = transaction.execute(query.as_str()).await {
                 warn!(
-                    "Constraints creation failed for table: {},  query: '{}'. Error: {}",
+                    "Constraints creation failed for table: {}, query: '{}'. Error: {}",
                     table_name, query, err
                 );
                 transaction.execute("SET FOREIGN_KEY_CHECKS=1".to_string().as_str());
@@ -68,7 +69,12 @@ impl DatabaseInserter {
 
         if let Err(_err) = transaction.execute(query).await {
             transaction.rollback().await?;
-            return Err(anyhow!("Cannot execute transactional query: {}", &query));
+            let preview = if query.is_empty() {
+                "EMPTY QUERY".to_string()
+            } else {
+                query.chars().take(100).collect()
+            };
+            return Err(anyhow!("Cannot execute transaction query: {}", preview));
         }
 
         transaction.execute("SET FOREIGN_KEY_CHECKS=1").await?;
@@ -85,20 +91,31 @@ impl DatabaseInserter {
     }
 
     pub async fn reset_tables(&mut self, tables: &[String], action: TableAction) -> Result<()> {
-        debug!("Resetting tables");
-
-        let mut all_tables = self.get_all_tables().await?;
+        let mut all_tables = self.get_all_tables().await.with_context(|| {
+            "Resetting tables encountered an error, cannot obtain existing tables"
+        })?;
 
         // Filter and keep only the tables that exist in the database and are also present in the `tables` slice
-        all_tables.retain(|table| tables.contains(table));
+        all_tables.retain(|table| {
+            tables
+                .iter()
+                .any(|t| t.to_lowercase() == table.to_lowercase())
+        });
 
-        let reset_tables_query = build_reset_query(&all_tables, &action);
-        self.execute_transactional_query(reset_tables_query.as_str())
-            .await?;
+        if all_tables.is_empty() {
+            debug!("No tables to reset");
+        } else {
+            debug!("Resetting tables");
+            let reset_tables_query = build_reset_query(&all_tables, &action);
 
-        match action {
-            TableAction::Drop => info!("Tables dropped successfully"),
-            TableAction::Truncate => info!("Tables truncated successfully"),
+            self.execute_transactional_query(reset_tables_query.as_str())
+                .await
+                .with_context(|| "Resetting tables encountered an error")?;
+
+            match action {
+                TableAction::Drop => info!("Tables dropped successfully"),
+                TableAction::Truncate => info!("Tables truncated successfully"),
+            }
         }
 
         Ok(())

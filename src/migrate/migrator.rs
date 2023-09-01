@@ -77,7 +77,9 @@ impl DatabaseMigrator {
 
         if self.options.constraints {
             let mut constraints_creator = ConstraintsCreator::new(self.inserter.clone());
-            constraints_creator.run(successful_results).await;
+            constraints_creator
+                .run(successful_results, formatted_tables)
+                .await;
         }
 
         let end_time = Instant::now();
