@@ -96,7 +96,11 @@ impl DatabaseInserter {
         })?;
 
         // Filter and keep only the tables that exist in the database and are also present in the `tables` slice
-        all_tables.retain(|table| tables.iter().any(|t| t.to_lowercase() == table.to_lowercase()));
+        all_tables.retain(|table| {
+            tables
+                .iter()
+                .any(|t| t.to_lowercase() == table.to_lowercase())
+        });
 
         if all_tables.is_empty() {
             debug!("No tables to reset");
