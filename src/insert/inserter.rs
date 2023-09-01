@@ -67,7 +67,6 @@ impl DatabaseInserter {
         transaction.execute("SET FOREIGN_KEY_CHECKS=0").await?;
 
         if let Err(_err) = transaction.execute(query).await {
-
             transaction.rollback().await?;
             let preview = if query.is_empty() {
                 "EMPTY QUERY".to_string()
