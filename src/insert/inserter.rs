@@ -20,9 +20,9 @@ impl DatabaseInserter {
 
         debug!("Creating table {}", table_name);
 
-        sqlx::query(create_table_query.as_str())
-            .execute(&self.pool)
-            .await?;
+        self.execute_transactional_query(create_table_query.as_str())
+            .await
+            .with_context(|| format!("Encountered an error while creating table {}", table_name))?;
 
         info!("Table {} created successfully", table_name);
 
