@@ -33,8 +33,9 @@ impl DatabaseInserter {
         &mut self,
         table_name: &str,
         schema: &[ColumnSchema],
+        formatted_tables: &[String],
     ) -> Result<()> {
-        let alter_table_query = build_create_constraints(table_name, schema);
+        let alter_table_query = build_create_constraints(table_name, schema, formatted_tables);
 
         if let Some(query) = &alter_table_query {
             debug!("Creating constraints for table {}", table_name);
@@ -46,7 +47,7 @@ impl DatabaseInserter {
 
             if let Err(err) = transaction.execute(query.as_str()).await {
                 warn!(
-                    "Constraints creation failed for table: {},  query: '{}'. Error: {}",
+                    "Constraints creation failed for table: {}, query: '{}'. Error: {}",
                     table_name, query, err
                 );
                 transaction.execute("SET FOREIGN_KEY_CHECKS=1".to_string().as_str());

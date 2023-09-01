@@ -29,13 +29,38 @@ pub fn build_reset_query(tables: &[String], action: &TableAction) -> String {
         .join("\n")
 }
 
-pub fn build_create_constraints(table_name: &str, schema: &[ColumnSchema]) -> Option<String> {
+pub fn build_create_constraints(
+    table_name: &str,
+    schema: &[ColumnSchema],
+    formatted_tables: &[String],
+) -> Option<String> {
     let constraints: Vec<String> = schema
         .iter()
         .filter_map(|column| {
             column
                 .constraints
                 .as_ref()
+                .filter(|constraint| {
+                    match constraint {
+                        Constraint::ForeignKey {
+                            referenced_table,
+                            referenced_column,
+                            ..
+                        } => {
+                            if formatted_tables.contains(referenced_table) {
+                                debug!("Creating constraint in table: {} on column `{}` with foreign key reference to `{}.{}`", table_name, column.column_name, referenced_table, referenced_column);
+                                true
+                            } else {
+                                warn!(
+                                    "Skipping constraint in table {} on column `{}`with foreign key reference to `{}.{}`",
+                                    table_name, column.column_name, referenced_table, referenced_column
+                                );
+                                false
+                            }
+                        }
+                        _ => true,
+                    }
+                })
                 .map(|constraints| match constraints {
                     //Constraint::PrimaryKey => format!("ADD PRIMARY KEY(`{}`)", column.column_name),
                     Constraint::ForeignKey {
