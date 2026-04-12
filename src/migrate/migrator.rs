@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Error, Result};
-use futures::future::join_all;
 use log::info;
 use tokio::spawn;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, watch};
 use tokio::time::Instant;
 
 use crate::common::errors::MigrationError;
-use crate::common::helpers::{format_snake_case, print_error_chain};
+use crate::common::helpers::format_snake_case;
 use crate::extract::extractor::DatabaseExtractor;
 use crate::insert::inserter::DatabaseInserter;
 use crate::insert::table_action::TableAction;
@@ -68,13 +67,7 @@ impl DatabaseMigrator {
             .reset_tables(&formatted_tables, action)
             .await?;
 
-        let migration_results = self.run_migration(tables).await;
-        let (successful_results, errors) = process_migration_results(migration_results);
-
-        // Handle errors
-        for err in &errors {
-            print_error_chain(err);
-        }
+        let successful_results = self.run_migration(&tables).await?;
 
         if self.options.constraints {
             let mut constraints_creator = ConstraintsCreator::new(self.inserter.clone());
@@ -89,13 +82,6 @@ impl DatabaseMigrator {
             "Migration finished, total time took: {}s",
             end_time.saturating_duration_since(start_time).as_secs_f32()
         );
-
-        if !errors.is_empty() {
-            bail!(
-                "{} table(s) failed to migrate. See errors above for details",
-                errors.len()
-            );
-        }
 
         Ok(())
     }
@@ -124,28 +110,49 @@ impl DatabaseMigrator {
         Ok((tables, formatted_tables))
     }
 
-    async fn run_migration(&mut self, tables: Vec<String>) -> Vec<Result<MigrationResult, Error>> {
+    async fn run_migration(
+        &mut self,
+        tables: &[String],
+    ) -> Result<Vec<MigrationResult>> {
         let semaphore = Arc::new(Semaphore::new(self.options.max_concurrent_tasks));
 
-        let mut migration_tasks = Vec::new();
+        // Channel to signal cancellation when a task fails
+        let (cancel_tx, cancel_rx) = watch::channel(false);
 
+        let mut migration_tasks = Vec::new();
+        let mut successful_results = Vec::new();
+
+        // Spawn tasks for all tables
         for table in tables {
             let semaphore_clone = Arc::clone(&semaphore);
+            let mut cancel_rx = cancel_rx.clone();
 
             let extractor = self.extractor.clone();
             let inserter = self.inserter.clone();
             let mappings = self.mappings.clone();
             let options = self.options.clone();
+            let table = table.clone();
+            let table_name = table.clone();
 
             let task = spawn(async move {
-                let permit = semaphore_clone
-                    .acquire()
-                    .await
-                    .map_err(|_| {
-                        anyhow::anyhow!("Failed to acquire semaphore permit for table '{}'", table)
-                    })?;
+                // Wait for semaphore permit, but also check for cancellation
+                let permit = tokio::select! {
+                    permit = semaphore_clone.acquire() => {
+                        permit.map_err(|_| anyhow::anyhow!("Semaphore closed"))?
+                    }
+                    _ = cancel_rx.changed() => {
+                        // Another task failed, skip this table
+                        return Ok(None);
+                    }
+                };
 
-                let mut table_migrator = TableMigrator::new(extractor, inserter, mappings, options);
+                // Check if cancelled before starting work
+                if *cancel_rx.borrow() {
+                    return Ok(None);
+                }
+
+                let mut table_migrator =
+                    TableMigrator::new(extractor, inserter, mappings, options);
 
                 let result = table_migrator
                     .migrate_table(&table)
@@ -153,27 +160,57 @@ impl DatabaseMigrator {
                     .with_context(|| format!("Error while migrating table: {}", table));
 
                 drop(permit);
-                result
+                result.map(Some)
             });
 
-            migration_tasks.push(task);
+            migration_tasks.push((table_name, task));
         }
 
-        let join_results = join_all(migration_tasks).await;
+        // Collect results as they complete, fail fast on first error
+        let mut first_error: Option<Error> = None;
+        let mut skipped_tables: Vec<String> = Vec::new();
 
-        join_results
-            .into_iter()
-            .map(|join_handle_result| match join_handle_result {
-                Ok(migration_result) => migration_result,
-                Err(join_err) => {
-                    // The task panicked or was cancelled
-                    let table_hint = format!("{}", join_err);
-                    Err(anyhow::anyhow!(MigrationError::TaskPanicked {
-                        table: table_hint,
-                    }))
+        for (table_name, task) in migration_tasks {
+            let join_result = task.await;
+
+            match join_result {
+                Ok(Ok(Some(migration_result))) => {
+                    successful_results.push(migration_result);
                 }
-            })
-            .collect()
+                Ok(Ok(None)) => {
+                    // Task was cancelled before starting
+                    skipped_tables.push(table_name);
+                }
+                Ok(Err(err)) => {
+                    if first_error.is_none() {
+                        // Signal all pending tasks to cancel
+                        let _ = cancel_tx.send(true);
+                        first_error = Some(err);
+                    }
+                }
+                Err(join_err) => {
+                    if first_error.is_none() {
+                        let _ = cancel_tx.send(true);
+                        first_error = Some(anyhow::anyhow!(MigrationError::TaskPanicked {
+                            table: join_err.to_string(),
+                        }));
+                    }
+                }
+            }
+        }
+
+        if let Some(err) = first_error {
+            if !skipped_tables.is_empty() {
+                warn!(
+                    "Migration aborted. Skipped {} remaining table(s): {}",
+                    skipped_tables.len(),
+                    skipped_tables.join(", ")
+                );
+            }
+            return Err(err);
+        }
+
+        Ok(successful_results)
     }
 }
 
@@ -219,19 +256,4 @@ fn format_table_names(tables: &[String], format: bool) -> Vec<String> {
     } else {
         tables.to_vec()
     }
-}
-
-fn process_migration_results(
-    migration_results: Vec<Result<MigrationResult, Error>>,
-) -> (Vec<MigrationResult>, Vec<Error>) {
-    let (successful_results, errors): (Vec<_>, Vec<_>) =
-        migration_results.into_iter().partition(Result::is_ok);
-
-    let successful_results: Vec<MigrationResult> =
-        successful_results.into_iter().map(Result::unwrap).collect();
-
-    (
-        successful_results,
-        errors.into_iter().map(Result::unwrap_err).collect(),
-    )
 }
