@@ -1,9 +1,9 @@
+use crate::common::schema::ColumnSchema;
+use crate::extract::format::format_row_values;
 use anyhow::{anyhow, Context, Result};
 use bb8::{Pool, PooledConnection};
 use bb8_tiberius::ConnectionManager;
 use futures::stream::{BoxStream, StreamExt};
-use crate::common::schema::ColumnSchema;
-use crate::extract::format::format_row_values;
 
 #[derive(Clone)]
 pub struct DatabaseExtractor {
@@ -99,7 +99,7 @@ pub async fn open_row_stream<'a>(
         .map(|row_result| {
             row_result
                 .map_err(anyhow::Error::from)
-                .and_then(|row| format_row_values(row))
+                .and_then(format_row_values)
         })
         .boxed();
 

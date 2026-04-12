@@ -16,6 +16,7 @@ pub struct Mapping {
 }
 
 impl Mappings {
+    #[cfg(test)]
     pub fn from_entries(entries: HashMap<String, Mapping>) -> Self {
         Mappings { mappings: entries }
     }

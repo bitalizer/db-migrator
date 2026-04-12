@@ -20,6 +20,7 @@ pub struct DatabaseConfig {
 #[derive(Debug, Clone)]
 pub struct SettingsConfig {
     pub max_packet_bytes: usize,
+    #[allow(dead_code)]
     pub collation: String,
     pub whitelisted_tables: Vec<String>,
 }
@@ -262,8 +263,7 @@ mod tests {
         .parse()
         .unwrap();
 
-        let result =
-            parse_database_config(toml.get("mssql_database").unwrap().clone());
+        let result = parse_database_config(toml.get("mssql_database").unwrap().clone());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("host"));
     }
