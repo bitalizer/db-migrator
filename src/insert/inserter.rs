@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use sqlx::{Acquire, Executor, MySqlPool, Row};
 
+use crate::common::sql::{escape_mysql_identifier, escape_sql_string};
+
 use crate::common::schema::ColumnSchema;
 use crate::insert::query::{build_create_constraints, build_create_table_query, build_reset_query};
 use crate::insert::table_action::TableAction;
@@ -145,7 +147,7 @@ impl DatabaseInserter {
     pub async fn table_exists(&mut self, table_name: &str) -> Result<bool> {
         let query = format!(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '{}'",
-            table_name
+            escape_sql_string(table_name)
         );
 
         let count: i64 = sqlx::query_scalar(&query).fetch_one(&self.pool).await?;
@@ -154,7 +156,10 @@ impl DatabaseInserter {
     }
 
     pub async fn table_rows_count(&mut self, table_name: &str) -> Result<i64> {
-        let query = format!("SELECT COUNT(*) FROM `{}`", table_name);
+        let query = format!(
+            "SELECT COUNT(*) FROM {}",
+            escape_mysql_identifier(table_name)
+        );
 
         let count: i64 = sqlx::query_scalar(&query).fetch_one(&self.pool).await?;
 

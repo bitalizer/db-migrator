@@ -1,4 +1,5 @@
 use crate::common::schema::ColumnSchema;
+use crate::common::sql::{escape_mssql_identifier, escape_sql_string};
 use crate::extract::format::format_row_values;
 use anyhow::{anyhow, Context, Result};
 use bb8::{Pool, PooledConnection};
@@ -72,7 +73,7 @@ impl DatabaseExtractor {
             FROM
                 INFORMATION_SCHEMA.COLUMNS c
             WHERE c.TABLE_NAME = '{}';",
-            table
+            escape_sql_string(table)
         );
 
         let rows = conn.simple_query(query).await?.into_first_result().await?;
@@ -91,7 +92,7 @@ pub async fn open_row_stream<'a>(
     conn: &'a mut PooledConnection<'_, ConnectionManager>,
     table: &'a str,
 ) -> Result<BoxStream<'a, Result<Vec<String>, anyhow::Error>>> {
-    let query = format!("SELECT * FROM [{}]", table);
+    let query = format!("SELECT * FROM {}", escape_mssql_identifier(table));
     let stream = conn
         .simple_query(query)
         .await?
