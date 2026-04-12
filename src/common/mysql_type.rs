@@ -117,17 +117,17 @@ impl MySqlType {
     pub fn to_sql(&self) -> String {
         let mut s = self.base_type.as_str().to_string();
 
-        if self.base_type.accepts_length() {
-            if let Some(len) = self.length {
-                s.push_str(&format!("({})", len));
-            }
-        } else if self.base_type.accepts_precision() {
-            if let Some(prec) = self.precision {
-                if let Some(scale) = self.scale {
-                    s.push_str(&format!("({}, {})", prec, scale));
-                } else {
-                    s.push_str(&format!("({})", prec));
-                }
+        if self.base_type.accepts_length()
+            && let Some(len) = self.length
+        {
+            s.push_str(&format!("({})", len));
+        } else if self.base_type.accepts_precision()
+            && let Some(prec) = self.precision
+        {
+            if let Some(scale) = self.scale {
+                s.push_str(&format!("({}, {})", prec, scale));
+            } else {
+                s.push_str(&format!("({})", prec));
             }
         }
 

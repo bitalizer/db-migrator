@@ -15,6 +15,7 @@ impl UserOverrides {
         UserOverrides { overrides: HashMap::new() }
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.overrides.len()
     }

@@ -20,7 +20,7 @@ use crate::migrate::type_registry::TypeRegistry;
 pub struct DatabaseMigrator<E: Extractor, I: Inserter> {
     extractor: E,
     inserter: I,
-    registry: TypeRegistry,
+    registry: Arc<TypeRegistry>,
     options: MigrationOptions,
 }
 
@@ -29,7 +29,7 @@ impl<E: Extractor, I: Inserter> DatabaseMigrator<E, I> {
         DatabaseMigrator {
             extractor,
             inserter,
-            registry,
+            registry: Arc::new(registry),
             options,
         }
     }
@@ -117,7 +117,7 @@ impl<E: Extractor, I: Inserter> DatabaseMigrator<E, I> {
 
             let extractor = self.extractor.clone();
             let inserter = self.inserter.clone();
-            let registry = TypeRegistry::with_defaults();
+            let registry = Arc::clone(&self.registry);
             let options = self.options.clone();
             let table = table.clone();
             let table_name = table.clone();

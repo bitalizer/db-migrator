@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::{Context, Error, Result};
 use futures::TryStreamExt;
 use log::info;
@@ -19,12 +21,12 @@ const RESERVED_BYTES: usize = 10;
 pub struct TableMigrator<E: Extractor, I: Inserter> {
     extractor: E,
     inserter: I,
-    registry: TypeRegistry,
+    registry: Arc<TypeRegistry>,
     options: MigrationOptions,
 }
 
 impl<E: Extractor, I: Inserter> TableMigrator<E, I> {
-    pub fn new(extractor: E, inserter: I, registry: TypeRegistry, options: MigrationOptions) -> Self {
+    pub fn new(extractor: E, inserter: I, registry: Arc<TypeRegistry>, options: MigrationOptions) -> Self {
         TableMigrator {
             extractor,
             inserter,

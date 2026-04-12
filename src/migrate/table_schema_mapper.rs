@@ -39,14 +39,14 @@ impl TableSchemaMapper {
                         }
                         Some(len) if len > 0 => {
                             let len = len as u32;
-                            if let Some(max) = entry.mysql_type.max_length() {
-                                if len > max {
-                                    return Err(anyhow!(
-                                        "Column '{}' length {} exceeds MySQL {} max length {}. \
-                                         Use an override to map to longtext/longblob.",
-                                        column.column_name, len, entry.mysql_type, max
-                                    ));
-                                }
+                            if let Some(max) = entry.mysql_type.max_length()
+                                && len > max
+                            {
+                                return Err(anyhow!(
+                                    "Column '{}' length {} exceeds MySQL {} max length {}. \
+                                     Use an override to map to longtext/longblob.",
+                                    column.column_name, len, entry.mysql_type, max
+                                ));
                             }
                             Some(len)
                         }
