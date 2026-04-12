@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use crate::common::constraints::Constraint;
 use crate::common::errors::MigrationError;

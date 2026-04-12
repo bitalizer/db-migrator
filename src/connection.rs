@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bb8::Pool;
 use bb8_tiberius::ConnectionManager;
-use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions};
 use sqlx::ConnectOptions;
+use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions};
 use tiberius::{AuthMethod, Config, EncryptionLevel};
 
 use crate::config::DatabaseConfig;

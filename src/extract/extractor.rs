@@ -1,22 +1,28 @@
 use crate::common::schema::ColumnSchema;
 use crate::common::sql::{escape_mssql_identifier, escape_sql_string};
 use crate::extract::format::format_row_values;
-use anyhow::{anyhow, Context, Result};
-use bb8::{Pool, PooledConnection};
+use crate::extract::traits::Extractor;
+use anyhow::{Context, Result, anyhow};
+use async_stream::stream;
+use async_trait::async_trait;
+use bb8::Pool;
 use bb8_tiberius::ConnectionManager;
 use futures::stream::{BoxStream, StreamExt};
 
 #[derive(Clone)]
 pub struct DatabaseExtractor {
-    pub pool: Pool<ConnectionManager>,
+    pool: Pool<ConnectionManager>,
 }
 
 impl DatabaseExtractor {
     pub fn new(pool: Pool<ConnectionManager>) -> Self {
         DatabaseExtractor { pool }
     }
+}
 
-    pub async fn fetch_tables(&mut self) -> Result<Vec<String>> {
+#[async_trait]
+impl Extractor for DatabaseExtractor {
+    async fn fetch_tables(&self) -> Result<Vec<String>> {
         let mut conn = self.pool.get().await?;
 
         let rows = conn
@@ -42,10 +48,10 @@ impl DatabaseExtractor {
         Ok(tables)
     }
 
-    pub async fn get_table_schema(&mut self, table: &str) -> Result<Vec<ColumnSchema>> {
+    async fn get_table_schema(&self, table: &str) -> Result<Vec<ColumnSchema>> {
         let mut conn = self.pool.get().await?;
 
-        let query = format !(
+        let query = format!(
             "SELECT
                 c.COLUMN_NAME,
                 c.DATA_TYPE,
@@ -86,23 +92,38 @@ impl DatabaseExtractor {
 
         Ok(schema)
     }
-}
 
-pub async fn open_row_stream<'a>(
-    conn: &'a mut PooledConnection<'_, ConnectionManager>,
-    table: &'a str,
-) -> Result<BoxStream<'a, Result<Vec<String>, anyhow::Error>>> {
-    let query = format!("SELECT * FROM {}", escape_mssql_identifier(table));
-    let stream = conn
-        .simple_query(query)
-        .await?
-        .into_row_stream()
-        .map(|row_result| {
-            row_result
-                .map_err(anyhow::Error::from)
-                .and_then(format_row_values)
-        })
-        .boxed();
+    async fn stream_rows(&self, table: &str) -> Result<BoxStream<'static, Result<Vec<String>>>> {
+        let pool = self.pool.clone();
+        let table = table.to_owned();
 
-    Ok(stream)
+        let stream = stream! {
+            let conn_result = pool.get().await;
+            let mut conn = match conn_result {
+                Ok(conn) => conn,
+                Err(e) => {
+                    yield Err(anyhow::Error::from(e));
+                    return;
+                }
+            };
+
+            let query = format!("SELECT * FROM {}", escape_mssql_identifier(&table));
+            let query_stream = match conn.simple_query(query).await {
+                Ok(qs) => qs.into_row_stream(),
+                Err(e) => {
+                    yield Err(anyhow::Error::from(e));
+                    return;
+                }
+            };
+
+            futures::pin_mut!(query_stream);
+            while let Some(row_result) = query_stream.next().await {
+                yield row_result
+                    .map_err(anyhow::Error::from)
+                    .and_then(format_row_values);
+            }
+        };
+
+        Ok(Box::pin(stream))
+    }
 }

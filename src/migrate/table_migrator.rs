@@ -6,9 +6,9 @@ use tokio::time::Instant;
 use crate::common::errors::MigrationError;
 use crate::common::helpers::format_snake_case;
 use crate::common::schema::ColumnSchema;
-use crate::extract::extractor::{open_row_stream, DatabaseExtractor};
-use crate::insert::inserter::DatabaseInserter;
+use crate::extract::traits::Extractor;
 use crate::insert::query::build_insert_statement;
+use crate::insert::traits::Inserter;
 use crate::mappings::Mappings;
 use crate::migrate::migration_options::MigrationOptions;
 use crate::migrate::migration_result::MigrationResult;
@@ -16,20 +16,15 @@ use crate::migrate::table_schema_mapper::TableSchemaMapper;
 
 const RESERVED_BYTES: usize = 10;
 
-pub struct TableMigrator {
-    extractor: DatabaseExtractor,
-    inserter: DatabaseInserter,
+pub struct TableMigrator<E: Extractor, I: Inserter> {
+    extractor: E,
+    inserter: I,
     mappings: Mappings,
     options: MigrationOptions,
 }
 
-impl TableMigrator {
-    pub fn new(
-        extractor: DatabaseExtractor,
-        inserter: DatabaseInserter,
-        mappings: Mappings,
-        options: MigrationOptions,
-    ) -> Self {
+impl<E: Extractor, I: Inserter> TableMigrator<E, I> {
+    pub fn new(extractor: E, inserter: I, mappings: Mappings, options: MigrationOptions) -> Self {
         TableMigrator {
             extractor,
             inserter,
@@ -38,7 +33,7 @@ impl TableMigrator {
         }
     }
 
-    pub async fn migrate_table(&mut self, table_name: &str) -> Result<MigrationResult> {
+    pub async fn migrate_table(&self, table_name: &str) -> Result<MigrationResult> {
         let output_table_name = if self.options.format_snake_case {
             format_snake_case(table_name)
         } else {
@@ -49,7 +44,6 @@ impl TableMigrator {
 
         let start_time = Instant::now();
 
-        // Fetch and map table schema
         let table_schema = self
             .extractor
             .get_table_schema(table_name)
@@ -90,7 +84,6 @@ impl TableMigrator {
                 .with_context(|| format!("Failed to create table '{}'", output_table_name))?;
         }
 
-        // Migrate rows from input table to output table
         let migrated_count = self
             .migrate_table_rows(table_name, &output_table_name, &mapped_schema)
             .await
@@ -112,7 +105,7 @@ impl TableMigrator {
     }
 
     async fn migrate_table_rows(
-        &mut self,
+        &self,
         input_table: &str,
         output_table: &str,
         mapped_schema: &[ColumnSchema],
@@ -121,8 +114,7 @@ impl TableMigrator {
 
         let insert_statement = build_insert_statement(output_table, mapped_schema);
 
-        let mut conn = self.extractor.pool.get().await?;
-        let mut stream = open_row_stream(&mut conn, input_table).await?;
+        let mut stream = self.extractor.stream_rows(input_table).await?;
 
         let mut insert_query = String::with_capacity(self.options.max_packet_bytes);
         let mut total_bytes = insert_statement.len();
@@ -135,7 +127,7 @@ impl TableMigrator {
             let value_set_bytes = value_set.len();
 
             if RESERVED_BYTES + total_bytes + value_set_bytes > self.options.max_packet_bytes {
-                execute_batch(&mut self.inserter, &insert_query, transaction_count).await?;
+                execute_batch(&self.inserter, &insert_query, transaction_count).await?;
 
                 total_transaction_count += transaction_count;
                 insert_query.clear();
@@ -158,7 +150,7 @@ impl TableMigrator {
         }
 
         if transaction_count > 0 {
-            execute_batch(&mut self.inserter, &insert_query, transaction_count).await?;
+            execute_batch(&self.inserter, &insert_query, transaction_count).await?;
             total_transaction_count += transaction_count;
         }
 
@@ -166,8 +158,8 @@ impl TableMigrator {
     }
 }
 
-async fn execute_batch(
-    inserter: &mut DatabaseInserter,
+async fn execute_batch<I: Inserter>(
+    inserter: &I,
     insert_query: &str,
     transaction_count: usize,
 ) -> Result<(), Error> {
