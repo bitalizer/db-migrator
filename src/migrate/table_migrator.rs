@@ -1,10 +1,9 @@
-use std::sync::Arc;
-
-use anyhow::{anyhow, Context, Error, Result};
+use anyhow::{Context, Error, Result};
 use futures::TryStreamExt;
 use log::info;
 use tokio::time::Instant;
 
+use crate::common::errors::MigrationError;
 use crate::common::helpers::format_snake_case;
 use crate::common::schema::ColumnSchema;
 use crate::extract::extractor::{open_row_stream, DatabaseExtractor};
@@ -55,44 +54,55 @@ impl TableMigrator {
             .extractor
             .get_table_schema(table_name)
             .await
-            .with_context(|| "Failed to get table schema".to_string())?;
+            .with_context(|| format!("Failed to get schema for table '{}'", table_name))?;
 
         let mapped_schema = TableSchemaMapper::map_schema(
             &self.mappings,
             &table_schema,
             self.options.format_snake_case,
-        );
+        )
+        .with_context(|| format!("Failed to map schema for table '{}'", table_name))?;
 
         let table_exists = self
             .inserter
             .table_exists(&output_table_name)
             .await
-            .with_context(|| "Failed to check table existence".to_string())?;
+            .with_context(|| {
+                format!(
+                    "Failed to check existence of table '{}'",
+                    output_table_name
+                )
+            })?;
 
         if table_exists {
             let count = self.inserter.table_rows_count(&output_table_name).await?;
 
             if count > 0 {
-                return Err(anyhow!(
-                    "Rows already exists in table {}",
-                    &output_table_name
-                ));
+                return Err(MigrationError::TableAlreadyHasRows {
+                    table: output_table_name,
+                    count,
+                }
+                .into());
             }
         }
 
         if !table_exists {
-            // Create table in the output database
             self.inserter
                 .create_table(&output_table_name, &mapped_schema)
                 .await
-                .with_context(|| "Failed to create table".to_string())?;
+                .with_context(|| format!("Failed to create table '{}'", output_table_name))?;
         }
 
         // Migrate rows from input table to output table
         let migrated_count = self
             .migrate_table_rows(table_name, &output_table_name, &mapped_schema)
             .await
-            .with_context(|| "Failed to migrate rows".to_string())?;
+            .with_context(|| {
+                format!(
+                    "Failed to migrate rows for table '{}'",
+                    output_table_name
+                )
+            })?;
 
         let end_time = Instant::now();
         info!(
@@ -156,7 +166,6 @@ impl TableMigrator {
         }
 
         if transaction_count > 0 {
-            // If there are remaining rows in the insert_query, execute them
             execute_batch(&mut self.inserter, &insert_query, transaction_count).await?;
             total_transaction_count += transaction_count;
         }
@@ -167,33 +176,29 @@ impl TableMigrator {
 
 async fn execute_batch(
     inserter: &mut DatabaseInserter,
-    insert_query: &String,
+    insert_query: &str,
     transaction_count: usize,
 ) -> Result<(), Error> {
     if !insert_query.is_empty() {
-        let cloned_insert_query = Arc::new(insert_query.clone());
-
         let start_time = Instant::now();
 
-        let query_str = cloned_insert_query.as_str();
-
         debug!(
-            "Sending {} bytes batch with {} transactions",
-            query_str.len(),
+            "Sending {} bytes batch with {} rows",
+            insert_query.len(),
             transaction_count
         );
 
         inserter
-            .execute_transactional_query(query_str)
+            .execute_transactional_query(insert_query)
             .await
-            .with_context(|| "Failed to execute transactional query batch".to_string())?;
+            .with_context(|| "Failed to execute transactional query batch")?;
 
         let end_time = Instant::now();
 
         debug!(
-            "Executed batch with {} transactions, bytes: {}, took: {}s",
+            "Executed batch with {} rows, bytes: {}, took: {}s",
             transaction_count,
-            query_str.len(),
+            insert_query.len(),
             end_time.saturating_duration_since(start_time).as_secs_f32()
         );
     }
