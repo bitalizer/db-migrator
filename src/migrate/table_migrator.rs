@@ -5,30 +5,30 @@ use tokio::time::Instant;
 
 use crate::common::errors::MigrationError;
 use crate::common::helpers::format_snake_case;
-use crate::common::schema::ColumnSchema;
+use crate::common::target_schema::TargetColumn;
 use crate::extract::traits::Extractor;
 use crate::insert::query::build_insert_statement;
 use crate::insert::traits::Inserter;
-use crate::mappings::Mappings;
 use crate::migrate::migration_options::MigrationOptions;
 use crate::migrate::migration_result::MigrationResult;
 use crate::migrate::table_schema_mapper::TableSchemaMapper;
+use crate::migrate::type_registry::TypeRegistry;
 
 const RESERVED_BYTES: usize = 10;
 
 pub struct TableMigrator<E: Extractor, I: Inserter> {
     extractor: E,
     inserter: I,
-    mappings: Mappings,
+    registry: TypeRegistry,
     options: MigrationOptions,
 }
 
 impl<E: Extractor, I: Inserter> TableMigrator<E, I> {
-    pub fn new(extractor: E, inserter: I, mappings: Mappings, options: MigrationOptions) -> Self {
+    pub fn new(extractor: E, inserter: I, registry: TypeRegistry, options: MigrationOptions) -> Self {
         TableMigrator {
             extractor,
             inserter,
-            mappings,
+            registry,
             options,
         }
     }
@@ -51,7 +51,7 @@ impl<E: Extractor, I: Inserter> TableMigrator<E, I> {
             .with_context(|| format!("Failed to get schema for table '{}'", table_name))?;
 
         let mapped_schema = TableSchemaMapper::map_schema(
-            &self.mappings,
+            &self.registry,
             &table_schema,
             self.options.format_snake_case,
         )
@@ -108,7 +108,7 @@ impl<E: Extractor, I: Inserter> TableMigrator<E, I> {
         &self,
         input_table: &str,
         output_table: &str,
-        mapped_schema: &[ColumnSchema],
+        mapped_schema: &[TargetColumn],
     ) -> Result<usize> {
         info!("Migrating {} rows", output_table);
 

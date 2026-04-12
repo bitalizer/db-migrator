@@ -1,9 +1,9 @@
 use crate::common::constraints::Constraint;
-use crate::common::schema::ColumnSchema;
 use crate::common::sql::escape_mysql_identifier;
+use crate::common::target_schema::TargetColumn;
 use crate::insert::table_action::TableAction;
 
-pub fn build_insert_statement(table_name: &str, schema: &[ColumnSchema]) -> String {
+pub fn build_insert_statement(table_name: &str, schema: &[TargetColumn]) -> String {
     let column_names_string = schema
         .iter()
         .map(|column| escape_mysql_identifier(&column.column_name))
@@ -33,7 +33,7 @@ pub fn build_reset_query(tables: &[String], action: &TableAction) -> String {
 
 pub fn build_create_constraints(
     table_name: &str,
-    schema: &[ColumnSchema],
+    schema: &[TargetColumn],
     formatted_tables: &[String],
 ) -> Option<String> {
     let constraints: Vec<String> = schema
@@ -97,7 +97,7 @@ pub fn build_create_constraints(
     Some(alter_table_query)
 }
 
-pub fn build_create_table_query(table_name: &str, schema: &[ColumnSchema]) -> String {
+pub fn build_create_table_query(table_name: &str, schema: &[TargetColumn]) -> String {
     let columns: Vec<String> = schema
         .iter()
         .map(|column| {
@@ -106,16 +106,7 @@ pub fn build_create_table_query(table_name: &str, schema: &[ColumnSchema]) -> St
             result_str.push_str(&escape_mysql_identifier(&column.column_name));
             result_str.push(' ');
 
-            result_str.push_str(column.data_type.as_str());
-            if let Some(max_length) = column.character_maximum_length {
-                result_str.push_str(&format!("({})", max_length));
-            } else if let Some(precision) = column.numeric_precision {
-                if let Some(scale) = column.numeric_scale {
-                    result_str.push_str(&format!("({}, {})", precision, scale));
-                } else {
-                    result_str.push_str(&format!("({})", precision));
-                }
-            }
+            result_str.push_str(&column.data_type.to_sql());
 
             if let Some(constraint) = &column.constraints
                 && *constraint == Constraint::PrimaryKey
@@ -146,15 +137,21 @@ pub fn build_create_table_query(table_name: &str, schema: &[ColumnSchema]) -> St
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::mssql_type::MssqlType;
+    use crate::common::constraints::Constraint;
+    use crate::common::mysql_type::{MySqlBaseType, MySqlType};
+    use crate::common::target_schema::TargetColumn;
 
-    fn make_column(name: &str, data_type: MssqlType, nullable: bool) -> ColumnSchema {
-        ColumnSchema {
+    fn make_column(name: &str, base_type: MySqlBaseType, nullable: bool) -> TargetColumn {
+        TargetColumn {
             column_name: name.to_string(),
-            data_type,
-            character_maximum_length: None,
-            numeric_precision: None,
-            numeric_scale: None,
+            data_type: MySqlType {
+                base_type,
+                length: None,
+                precision: None,
+                scale: None,
+                unsigned: false,
+                zerofill: false,
+            },
             is_nullable: nullable,
             constraints: None,
         }
@@ -163,8 +160,8 @@ mod tests {
     #[test]
     fn test_build_insert_statement() {
         let schema = vec![
-            make_column("id", MssqlType::Int, false),
-            make_column("name", MssqlType::Varchar, true),
+            make_column("id", MySqlBaseType::Int, false),
+            make_column("name", MySqlBaseType::Varchar, true),
         ];
         let result = build_insert_statement("users", &schema);
         assert_eq!(result, "INSERT INTO `users` (`id`, `name`) VALUES");
@@ -172,7 +169,7 @@ mod tests {
 
     #[test]
     fn test_build_insert_statement_single_column() {
-        let schema = vec![make_column("id", MssqlType::Int, false)];
+        let schema = vec![make_column("id", MySqlBaseType::Int, false)];
         let result = build_insert_statement("test", &schema);
         assert_eq!(result, "INSERT INTO `test` (`id`) VALUES");
     }
@@ -180,8 +177,8 @@ mod tests {
     #[test]
     fn test_build_create_table_basic() {
         let schema = vec![
-            make_column("id", MssqlType::Int, false),
-            make_column("name", MssqlType::Varchar, true),
+            make_column("id", MySqlBaseType::Int, false),
+            make_column("name", MySqlBaseType::Varchar, true),
         ];
         let result = build_create_table_query("users", &schema);
         assert!(result.starts_with("CREATE TABLE `users`"));
@@ -191,7 +188,7 @@ mod tests {
 
     #[test]
     fn test_build_create_table_with_primary_key() {
-        let mut col = make_column("id", MssqlType::Int, false);
+        let mut col = make_column("id", MySqlBaseType::Int, false);
         col.constraints = Some(Constraint::PrimaryKey);
         let schema = vec![col];
         let result = build_create_table_query("test", &schema);
@@ -200,8 +197,8 @@ mod tests {
 
     #[test]
     fn test_build_create_table_with_char_length() {
-        let mut col = make_column("name", MssqlType::Varchar, true);
-        col.character_maximum_length = Some(255);
+        let mut col = make_column("name", MySqlBaseType::Varchar, true);
+        col.data_type.length = Some(255);
         let schema = vec![col];
         let result = build_create_table_query("test", &schema);
         assert!(result.contains("varchar(255)"));
@@ -209,9 +206,9 @@ mod tests {
 
     #[test]
     fn test_build_create_table_with_precision_and_scale() {
-        let mut col = make_column("price", MssqlType::Decimal, false);
-        col.numeric_precision = Some(10);
-        col.numeric_scale = Some(2);
+        let mut col = make_column("price", MySqlBaseType::Decimal, false);
+        col.data_type.precision = Some(10);
+        col.data_type.scale = Some(2);
         let schema = vec![col];
         let result = build_create_table_query("products", &schema);
         assert!(result.contains("decimal(10, 2)"));
@@ -219,11 +216,11 @@ mod tests {
 
     #[test]
     fn test_build_create_table_with_precision_only() {
-        let mut col = make_column("count", MssqlType::Int, false);
-        col.numeric_precision = Some(10);
+        let mut col = make_column("count", MySqlBaseType::Float, false);
+        col.data_type.precision = Some(10);
         let schema = vec![col];
         let result = build_create_table_query("test", &schema);
-        assert!(result.contains("int(10)"));
+        assert!(result.contains("float(10)"));
     }
 
     #[test]
@@ -243,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_build_create_constraints_with_foreign_key() {
-        let mut col = make_column("user_id", MssqlType::Int, false);
+        let mut col = make_column("user_id", MySqlBaseType::Int, false);
         col.constraints = Some(Constraint::ForeignKey {
             referenced_table: "users".to_string(),
             referenced_column: "id".to_string(),
@@ -260,7 +257,7 @@ mod tests {
 
     #[test]
     fn test_build_create_constraints_skips_missing_table() {
-        let mut col = make_column("user_id", MssqlType::Int, false);
+        let mut col = make_column("user_id", MySqlBaseType::Int, false);
         col.constraints = Some(Constraint::ForeignKey {
             referenced_table: "nonexistent".to_string(),
             referenced_column: "id".to_string(),
@@ -273,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_build_create_constraints_unique() {
-        let mut col = make_column("email", MssqlType::Varchar, false);
+        let mut col = make_column("email", MySqlBaseType::Varchar, false);
         col.constraints = Some(Constraint::Unique);
         let schema = vec![col];
         let formatted_tables = vec!["users".to_string()];
@@ -284,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_build_create_constraints_no_constraints() {
-        let schema = vec![make_column("id", MssqlType::Int, false)];
+        let schema = vec![make_column("id", MySqlBaseType::Int, false)];
         let formatted_tables = vec!["test".to_string()];
         let result = build_create_constraints("test", &schema, &formatted_tables);
         assert!(result.is_none());
@@ -292,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_build_create_constraints_check() {
-        let mut col = make_column("age", MssqlType::Int, false);
+        let mut col = make_column("age", MySqlBaseType::Int, false);
         col.constraints = Some(Constraint::Check("age > 0".to_string()));
         let schema = vec![col];
         let formatted_tables = vec!["users".to_string()];
@@ -303,14 +300,14 @@ mod tests {
 
     #[test]
     fn test_build_insert_reserved_word_column() {
-        let schema = vec![make_column("select", MssqlType::Int, false)];
+        let schema = vec![make_column("select", MySqlBaseType::Int, false)];
         let result = build_insert_statement("order", &schema);
         assert_eq!(result, "INSERT INTO `order` (`select`) VALUES");
     }
 
     #[test]
     fn test_build_create_table_backtick_in_name() {
-        let schema = vec![make_column("col`name", MssqlType::Int, false)];
+        let schema = vec![make_column("col`name", MySqlBaseType::Int, false)];
         let result = build_create_table_query("my`table", &schema);
         assert!(result.contains("CREATE TABLE `my``table`"));
         assert!(result.contains("`col``name`"));
@@ -326,7 +323,7 @@ mod tests {
 
     #[test]
     fn test_build_create_constraints_escaped_fk() {
-        let mut col = make_column("group", MssqlType::Int, false);
+        let mut col = make_column("group", MySqlBaseType::Int, false);
         col.constraints = Some(Constraint::ForeignKey {
             referenced_table: "order".to_string(),
             referenced_column: "select".to_string(),

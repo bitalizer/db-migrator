@@ -4,7 +4,7 @@ use sqlx::{Acquire, Executor, MySqlPool, Row};
 
 use crate::common::sql::{escape_mysql_identifier, escape_sql_string};
 
-use crate::common::schema::ColumnSchema;
+use crate::common::target_schema::TargetColumn;
 use crate::insert::query::{build_create_constraints, build_create_table_query, build_reset_query};
 use crate::insert::table_action::TableAction;
 use crate::insert::traits::Inserter;
@@ -30,7 +30,7 @@ impl DatabaseInserter {
 
 #[async_trait]
 impl Inserter for DatabaseInserter {
-    async fn create_table(&self, table_name: &str, schema: &[ColumnSchema]) -> Result<()> {
+    async fn create_table(&self, table_name: &str, schema: &[TargetColumn]) -> Result<()> {
         let create_table_query = build_create_table_query(table_name, schema);
 
         debug!("Creating table {}", table_name);
@@ -47,7 +47,7 @@ impl Inserter for DatabaseInserter {
     async fn create_constraints(
         &self,
         table_name: &str,
-        schema: &[ColumnSchema],
+        schema: &[TargetColumn],
         formatted_tables: &[String],
     ) -> Result<()> {
         let alter_table_query = build_create_constraints(table_name, schema, formatted_tables);

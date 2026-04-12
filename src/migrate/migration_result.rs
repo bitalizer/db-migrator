@@ -1,8 +1,8 @@
-use crate::common::schema::ColumnSchema;
+use crate::common::target_schema::TargetColumn;
 
 #[derive(Debug, Clone)]
 pub struct MigrationResult {
     pub table_name: String,
-    pub schema: Vec<ColumnSchema>,
+    pub schema: Vec<TargetColumn>,
     pub created: bool,
 }

@@ -1,16 +1,16 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::common::schema::ColumnSchema;
+use crate::common::target_schema::TargetColumn;
 use crate::insert::table_action::TableAction;
 
 #[async_trait]
 pub trait Inserter: Clone + Send + Sync + 'static {
-    async fn create_table(&self, name: &str, schema: &[ColumnSchema]) -> Result<()>;
+    async fn create_table(&self, name: &str, schema: &[TargetColumn]) -> Result<()>;
     async fn create_constraints(
         &self,
         name: &str,
-        schema: &[ColumnSchema],
+        schema: &[TargetColumn],
         tables: &[String],
     ) -> Result<()>;
     async fn execute_transactional_query(&self, query: &str) -> Result<()>;
