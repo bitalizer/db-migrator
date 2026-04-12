@@ -1,17 +1,19 @@
 use crate::common::constraints::Constraint;
 use crate::common::schema::ColumnSchema;
+use crate::common::sql::escape_mysql_identifier;
 use crate::insert::table_action::TableAction;
 
 pub fn build_insert_statement(table_name: &str, schema: &[ColumnSchema]) -> String {
     let column_names_string = schema
         .iter()
-        .map(|column| column.column_name.as_str())
+        .map(|column| escape_mysql_identifier(&column.column_name))
         .collect::<Vec<_>>()
         .join(", ");
 
     format!(
-        "INSERT INTO `{}` ({}) VALUES",
-        table_name, column_names_string
+        "INSERT INTO {} ({}) VALUES",
+        escape_mysql_identifier(table_name),
+        column_names_string
     )
 }
 
@@ -20,9 +22,9 @@ pub fn build_reset_query(tables: &[String], action: &TableAction) -> String {
         .iter()
         .map(|table_name| {
             format!(
-                "{} TABLE `{}`;",
+                "{} TABLE {};",
                 action.to_string().to_uppercase(),
-                table_name
+                escape_mysql_identifier(table_name)
             )
         })
         .collect::<Vec<_>>()
@@ -62,15 +64,18 @@ pub fn build_create_constraints(
                     }
                 })
                 .map(|constraints| match constraints {
-                    //Constraint::PrimaryKey => format!("ADD PRIMARY KEY(`{}`)", column.column_name),
                     Constraint::ForeignKey {
                         referenced_table,
                         referenced_column,
                     } => format!(
-                        "ADD FOREIGN KEY(`{}`) REFERENCES `{}`(`{}`) ON DELETE CASCADE",
-                        column.column_name, referenced_table, referenced_column
+                        "ADD FOREIGN KEY({}) REFERENCES {}({}) ON DELETE CASCADE",
+                        escape_mysql_identifier(&column.column_name),
+                        escape_mysql_identifier(referenced_table),
+                        escape_mysql_identifier(referenced_column)
                     ),
-                    Constraint::Unique => format!("ADD UNIQUE(`{}`)", column.column_name),
+                    Constraint::Unique => {
+                        format!("ADD UNIQUE({})", escape_mysql_identifier(&column.column_name))
+                    }
                     Constraint::Check(check_clause) => format!("ADD CHECK ({})", check_clause),
                     Constraint::Default(default_value) => format!("ADD DEFAULT {}", default_value),
                     _ => String::new(),
@@ -84,8 +89,8 @@ pub fn build_create_constraints(
     }
 
     let alter_table_query = format!(
-        "SET FOREIGN_KEY_CHECKS=0; ALTER TABLE `{}` {}",
-        table_name,
+        "SET FOREIGN_KEY_CHECKS=0; ALTER TABLE {} {}",
+        escape_mysql_identifier(table_name),
         constraints.join(", ")
     );
 
@@ -98,7 +103,7 @@ pub fn build_create_table_query(table_name: &str, schema: &[ColumnSchema]) -> St
         .map(|column| {
             let mut result_str = String::new();
 
-            result_str.push_str(&column.column_name);
+            result_str.push_str(&escape_mysql_identifier(&column.column_name));
             result_str.push(' ');
 
             result_str.push_str(&column.data_type);
@@ -131,7 +136,11 @@ pub fn build_create_table_query(table_name: &str, schema: &[ColumnSchema]) -> St
         .collect();
 
     let columns = columns.join(", ");
-    format!("CREATE TABLE `{}` ({})", table_name, columns)
+    format!(
+        "CREATE TABLE {} ({})",
+        escape_mysql_identifier(table_name),
+        columns
+    )
 }
 
 #[cfg(test)]
@@ -157,14 +166,14 @@ mod tests {
             make_column("name", "varchar", true),
         ];
         let result = build_insert_statement("users", &schema);
-        assert_eq!(result, "INSERT INTO `users` (id, name) VALUES");
+        assert_eq!(result, "INSERT INTO `users` (`id`, `name`) VALUES");
     }
 
     #[test]
     fn test_build_insert_statement_single_column() {
         let schema = vec![make_column("id", "int", false)];
         let result = build_insert_statement("test", &schema);
-        assert_eq!(result, "INSERT INTO `test` (id) VALUES");
+        assert_eq!(result, "INSERT INTO `test` (`id`) VALUES");
     }
 
     #[test]
@@ -175,8 +184,8 @@ mod tests {
         ];
         let result = build_create_table_query("users", &schema);
         assert!(result.starts_with("CREATE TABLE `users`"));
-        assert!(result.contains("id int NOT NULL"));
-        assert!(result.contains("name varchar NULL"));
+        assert!(result.contains("`id` int NOT NULL"));
+        assert!(result.contains("`name` varchar NULL"));
     }
 
     #[test]
@@ -243,7 +252,9 @@ mod tests {
         let result = build_create_constraints("orders", &schema, &formatted_tables);
         assert!(result.is_some());
         let query = result.unwrap();
-        assert!(query.contains("ADD FOREIGN KEY(`user_id`) REFERENCES `users`(`id`)"));
+        assert!(
+            query.contains("ADD FOREIGN KEY(`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE")
+        );
     }
 
     #[test]
@@ -287,5 +298,43 @@ mod tests {
         let result = build_create_constraints("users", &schema, &formatted_tables);
         assert!(result.is_some());
         assert!(result.unwrap().contains("ADD CHECK (age > 0)"));
+    }
+
+    #[test]
+    fn test_build_insert_reserved_word_column() {
+        let schema = vec![make_column("select", "int", false)];
+        let result = build_insert_statement("order", &schema);
+        assert_eq!(result, "INSERT INTO `order` (`select`) VALUES");
+    }
+
+    #[test]
+    fn test_build_create_table_backtick_in_name() {
+        let schema = vec![make_column("col`name", "int", false)];
+        let result = build_create_table_query("my`table", &schema);
+        assert!(result.contains("CREATE TABLE `my``table`"));
+        assert!(result.contains("`col``name`"));
+    }
+
+    #[test]
+    fn test_build_reset_query_reserved_word() {
+        let tables = vec!["order".to_string(), "select".to_string()];
+        let result = build_reset_query(&tables, &TableAction::Drop);
+        assert!(result.contains("DROP TABLE `order`;"));
+        assert!(result.contains("DROP TABLE `select`;"));
+    }
+
+    #[test]
+    fn test_build_create_constraints_escaped_fk() {
+        let mut col = make_column("group", "int", false);
+        col.constraints = Some(Constraint::ForeignKey {
+            referenced_table: "order".to_string(),
+            referenced_column: "select".to_string(),
+        });
+        let schema = vec![col];
+        let formatted_tables = vec!["order".to_string()];
+        let result = build_create_constraints("test", &schema, &formatted_tables);
+        assert!(result.is_some());
+        let query = result.unwrap();
+        assert!(query.contains("ADD FOREIGN KEY(`group`) REFERENCES `order`(`select`)"));
     }
 }
