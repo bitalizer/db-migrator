@@ -131,3 +131,203 @@ fn parse_settings_config(config: Value) -> Result<SettingsConfig> {
         whitelisted_tables,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_config_toml() -> Value {
+        r#"
+        [mssql_database]
+        host = "localhost"
+        port = 1433
+        username = "sa"
+        password = "password123"
+        database = "source_db"
+
+        [mysql_database]
+        host = "localhost"
+        port = 3306
+        username = "root"
+        password = "password123"
+        database = "target_db"
+
+        [settings]
+        max_packet_bytes = 1048576
+        collation = "Latin1_General_CI_AS"
+        whitelisted_tables = ["users", "orders"]
+        "#
+        .parse::<Value>()
+        .unwrap()
+    }
+
+    #[test]
+    fn test_valid_config() {
+        let config = Config::from_toml(valid_config_toml()).unwrap();
+        assert_eq!(config.mssql_database().host, "localhost");
+        assert_eq!(config.mssql_database().port, 1433);
+        assert_eq!(config.mssql_database().username, "sa");
+        assert_eq!(config.mssql_database().database, "source_db");
+        assert_eq!(config.mysql_database().host, "localhost");
+        assert_eq!(config.mysql_database().port, 3306);
+        assert_eq!(config.mysql_database().database, "target_db");
+        assert_eq!(config.settings().max_packet_bytes, 1048576);
+        assert_eq!(config.settings().collation, "Latin1_General_CI_AS");
+        assert_eq!(
+            config.settings().whitelisted_tables,
+            vec!["users", "orders"]
+        );
+    }
+
+    #[test]
+    fn test_missing_mssql_section() {
+        let toml: Value = r#"
+        [mysql_database]
+        host = "localhost"
+        port = 3306
+        username = "root"
+        password = "pass"
+        database = "db"
+
+        [settings]
+        max_packet_bytes = 1048576
+        collation = "Latin1_General_CI_AS"
+        whitelisted_tables = []
+        "#
+        .parse()
+        .unwrap();
+
+        let result = Config::from_toml(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("MSSQL"));
+    }
+
+    #[test]
+    fn test_missing_mysql_section() {
+        let toml: Value = r#"
+        [mssql_database]
+        host = "localhost"
+        port = 1433
+        username = "sa"
+        password = "pass"
+        database = "db"
+
+        [settings]
+        max_packet_bytes = 1048576
+        collation = "Latin1_General_CI_AS"
+        whitelisted_tables = []
+        "#
+        .parse()
+        .unwrap();
+
+        let result = Config::from_toml(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("MySQL"));
+    }
+
+    #[test]
+    fn test_missing_settings_section() {
+        let toml: Value = r#"
+        [mssql_database]
+        host = "localhost"
+        port = 1433
+        username = "sa"
+        password = "pass"
+        database = "db"
+
+        [mysql_database]
+        host = "localhost"
+        port = 3306
+        username = "root"
+        password = "pass"
+        database = "db"
+        "#
+        .parse()
+        .unwrap();
+
+        let result = Config::from_toml(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("settings"));
+    }
+
+    #[test]
+    fn test_missing_host_in_database() {
+        let toml: Value = r#"
+        [mssql_database]
+        port = 1433
+        username = "sa"
+        password = "pass"
+        database = "db"
+        "#
+        .parse()
+        .unwrap();
+
+        let result =
+            parse_database_config(toml.get("mssql_database").unwrap().clone());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("host"));
+    }
+
+    #[test]
+    fn test_missing_port_in_database() {
+        let toml: Value = r#"
+        [db]
+        host = "localhost"
+        username = "sa"
+        password = "pass"
+        database = "db"
+        "#
+        .parse()
+        .unwrap();
+
+        let result = parse_database_config(toml.get("db").unwrap().clone());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("port"));
+    }
+
+    #[test]
+    fn test_missing_max_packet_bytes() {
+        let toml: Value = r#"
+        [settings]
+        collation = "Latin1_General_CI_AS"
+        whitelisted_tables = []
+        "#
+        .parse()
+        .unwrap();
+
+        let result = parse_settings_config(toml.get("settings").unwrap().clone());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("max send packet"));
+    }
+
+    #[test]
+    fn test_empty_whitelisted_tables() {
+        let config = Config::from_toml(
+            r#"
+            [mssql_database]
+            host = "localhost"
+            port = 1433
+            username = "sa"
+            password = "pass"
+            database = "db"
+
+            [mysql_database]
+            host = "localhost"
+            port = 3306
+            username = "root"
+            password = "pass"
+            database = "db"
+
+            [settings]
+            max_packet_bytes = 1048576
+            collation = "Latin1_General_CI_AS"
+            whitelisted_tables = []
+            "#
+            .parse()
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert!(config.settings().whitelisted_tables.is_empty());
+    }
+}

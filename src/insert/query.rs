@@ -99,7 +99,7 @@ pub fn build_create_table_query(table_name: &str, schema: &[ColumnSchema]) -> St
             let mut result_str = String::new();
 
             result_str.push_str(&column.column_name);
-            result_str.push(' '); // Add a space after column_name
+            result_str.push(' ');
 
             result_str.push_str(&column.data_type);
             if let Some(max_length) = column.character_maximum_length {
@@ -112,15 +112,13 @@ pub fn build_create_table_query(table_name: &str, schema: &[ColumnSchema]) -> St
                 }
             }
 
-            // Add constraints if it contains Constraint::PrimaryKey
             if let Some(constraint) = &column.constraints {
                 if *constraint == Constraint::PrimaryKey {
                     result_str.push_str(" PRIMARY KEY");
                 }
-                // You can add more checks for other constraint types if needed
             }
 
-            result_str.push(' '); // Add a space after data_type and type_properties
+            result_str.push(' ');
             let nullable_property = if column.is_nullable {
                 "NULL"
             } else {
@@ -133,7 +131,161 @@ pub fn build_create_table_query(table_name: &str, schema: &[ColumnSchema]) -> St
         .collect();
 
     let columns = columns.join(", ");
-    let create_table_query = format!("CREATE TABLE `{}` ({})", table_name, columns);
+    format!("CREATE TABLE `{}` ({})", table_name, columns)
+}
 
-    create_table_query
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_column(name: &str, data_type: &str, nullable: bool) -> ColumnSchema {
+        ColumnSchema {
+            column_name: name.to_string(),
+            data_type: data_type.to_string(),
+            character_maximum_length: None,
+            numeric_precision: None,
+            numeric_scale: None,
+            is_nullable: nullable,
+            constraints: None,
+        }
+    }
+
+    #[test]
+    fn test_build_insert_statement() {
+        let schema = vec![
+            make_column("id", "int", false),
+            make_column("name", "varchar", true),
+        ];
+        let result = build_insert_statement("users", &schema);
+        assert_eq!(result, "INSERT INTO `users` (id, name) VALUES");
+    }
+
+    #[test]
+    fn test_build_insert_statement_single_column() {
+        let schema = vec![make_column("id", "int", false)];
+        let result = build_insert_statement("test", &schema);
+        assert_eq!(result, "INSERT INTO `test` (id) VALUES");
+    }
+
+    #[test]
+    fn test_build_create_table_basic() {
+        let schema = vec![
+            make_column("id", "int", false),
+            make_column("name", "varchar", true),
+        ];
+        let result = build_create_table_query("users", &schema);
+        assert!(result.starts_with("CREATE TABLE `users`"));
+        assert!(result.contains("id int NOT NULL"));
+        assert!(result.contains("name varchar NULL"));
+    }
+
+    #[test]
+    fn test_build_create_table_with_primary_key() {
+        let mut col = make_column("id", "int", false);
+        col.constraints = Some(Constraint::PrimaryKey);
+        let schema = vec![col];
+        let result = build_create_table_query("test", &schema);
+        assert!(result.contains("PRIMARY KEY"));
+    }
+
+    #[test]
+    fn test_build_create_table_with_char_length() {
+        let mut col = make_column("name", "varchar", true);
+        col.character_maximum_length = Some(255);
+        let schema = vec![col];
+        let result = build_create_table_query("test", &schema);
+        assert!(result.contains("varchar(255)"));
+    }
+
+    #[test]
+    fn test_build_create_table_with_precision_and_scale() {
+        let mut col = make_column("price", "decimal", false);
+        col.numeric_precision = Some(10);
+        col.numeric_scale = Some(2);
+        let schema = vec![col];
+        let result = build_create_table_query("products", &schema);
+        assert!(result.contains("decimal(10, 2)"));
+    }
+
+    #[test]
+    fn test_build_create_table_with_precision_only() {
+        let mut col = make_column("count", "int", false);
+        col.numeric_precision = Some(10);
+        let schema = vec![col];
+        let result = build_create_table_query("test", &schema);
+        assert!(result.contains("int(10)"));
+    }
+
+    #[test]
+    fn test_build_reset_query_drop() {
+        let tables = vec!["users".to_string(), "orders".to_string()];
+        let result = build_reset_query(&tables, &TableAction::Drop);
+        assert!(result.contains("DROP TABLE `users`;"));
+        assert!(result.contains("DROP TABLE `orders`;"));
+    }
+
+    #[test]
+    fn test_build_reset_query_truncate() {
+        let tables = vec!["users".to_string()];
+        let result = build_reset_query(&tables, &TableAction::Truncate);
+        assert!(result.contains("TRUNCATE TABLE `users`;"));
+    }
+
+    #[test]
+    fn test_build_create_constraints_with_foreign_key() {
+        let mut col = make_column("user_id", "int", false);
+        col.constraints = Some(Constraint::ForeignKey {
+            referenced_table: "users".to_string(),
+            referenced_column: "id".to_string(),
+        });
+        let schema = vec![col];
+        let formatted_tables = vec!["users".to_string(), "orders".to_string()];
+        let result = build_create_constraints("orders", &schema, &formatted_tables);
+        assert!(result.is_some());
+        let query = result.unwrap();
+        assert!(query.contains("ADD FOREIGN KEY(`user_id`) REFERENCES `users`(`id`)"));
+    }
+
+    #[test]
+    fn test_build_create_constraints_skips_missing_table() {
+        let mut col = make_column("user_id", "int", false);
+        col.constraints = Some(Constraint::ForeignKey {
+            referenced_table: "nonexistent".to_string(),
+            referenced_column: "id".to_string(),
+        });
+        let schema = vec![col];
+        let formatted_tables = vec!["orders".to_string()];
+        let result = build_create_constraints("orders", &schema, &formatted_tables);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_build_create_constraints_unique() {
+        let mut col = make_column("email", "varchar", false);
+        col.constraints = Some(Constraint::Unique);
+        let schema = vec![col];
+        let formatted_tables = vec!["users".to_string()];
+        let result = build_create_constraints("users", &schema, &formatted_tables);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("ADD UNIQUE(`email`)"));
+    }
+
+    #[test]
+    fn test_build_create_constraints_no_constraints() {
+        let schema = vec![make_column("id", "int", false)];
+        let formatted_tables = vec!["test".to_string()];
+        let result = build_create_constraints("test", &schema, &formatted_tables);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_build_create_constraints_check() {
+        let mut col = make_column("age", "int", false);
+        col.constraints = Some(Constraint::Check("age > 0".to_string()));
+        let schema = vec![col];
+        let formatted_tables = vec!["users".to_string()];
+        let result = build_create_constraints("users", &schema, &formatted_tables);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("ADD CHECK (age > 0)"));
+    }
 }
