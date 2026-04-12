@@ -14,14 +14,14 @@ pub fn format_row_values(row: Row) -> Result<Vec<String>> {
 
 pub fn format_column_value(item: ColumnData) -> Result<String> {
     match item {
-        ColumnData::Binary(Some(val)) => Ok(format!("'0x{}'", encode(val))),
+        ColumnData::Binary(Some(val)) => Ok(format!("0x{}", encode(val))),
         ColumnData::Binary(None) => Ok("NULL".to_string()),
-        ColumnData::Bit(val) => Ok(val.unwrap_or_default().to_string()),
+        ColumnData::Bit(val) => Ok(format_number_value(val.map(|b| b as u8))),
         ColumnData::I16(val) => Ok(format_number_value(val)),
         ColumnData::I32(val) => Ok(format_number_value(val)),
         ColumnData::I64(val) => Ok(format_number_value(val)),
-        ColumnData::F32(val) => Ok(format_string_value(val)),
-        ColumnData::F64(val) => Ok(format_string_value(val)),
+        ColumnData::F32(val) => Ok(format_number_value(val)),
+        ColumnData::F64(val) => Ok(format_number_value(val)),
         ColumnData::Guid(val) => Ok(format_string_value(val)),
         ColumnData::Numeric(val) => Ok(format_numeric_value(val)),
         ColumnData::String(val) => Ok(format_string_value(val)),
@@ -31,7 +31,7 @@ pub fn format_column_value(item: ColumnData) -> Result<String> {
         ColumnData::DateTime(ref val) => format_datetime(val),
         ColumnData::DateTime2(ref val) => format_datetime2(val),
         ColumnData::DateTimeOffset(ref val) => format_datetime_offset(val),
-        ColumnData::U8(val) => Ok(val.unwrap_or_default().to_string()),
+        ColumnData::U8(val) => Ok(format_number_value(val)),
         ColumnData::Xml(val) => match val {
             Some(xml) => Ok(format_string_value(Some(xml.as_ref().to_string()))),
             None => Ok("NULL".to_string()),
@@ -79,7 +79,7 @@ pub fn format_time(val: &Option<Time>) -> Result<String> {
                 }
             })?;
             let time = base_time + Duration::nanoseconds(ns);
-            Ok(format!("{}", time.format("'%H:%M:%S'")))
+            Ok(format!("{}", time.format("'%H:%M:%S%.f'")))
         }
         None => Ok("NULL".to_string()),
     }
@@ -119,7 +119,7 @@ pub fn format_datetime2(val: &Option<DateTime2>) -> Result<String> {
             let ns = dt.time().increments() as i64 * 10i64.pow(9 - dt.time().scale() as u32);
             let time = base_time + Duration::nanoseconds(ns);
             let datetime = NaiveDateTime::new(date, time);
-            Ok(datetime.format("'%Y-%m-%d %H:%M:%S'").to_string())
+            Ok(datetime.format("'%Y-%m-%d %H:%M:%S%.f'").to_string())
         }
         None => Ok("NULL".to_string()),
     }
@@ -129,7 +129,7 @@ pub fn format_small_datetime(val: &Option<SmallDateTime>) -> Result<String> {
     match val {
         Some(dt) => {
             let date = from_days(dt.days() as i64, 1900)?;
-            let time = from_minutes(dt.seconds_fragments() as u32 * 60)?;
+            let time = from_minutes(dt.seconds_fragments() as u32)?;
             let datetime = NaiveDateTime::new(date, time);
             Ok(datetime.format("'%Y-%m-%d %H:%M:%S'").to_string())
         }
@@ -154,7 +154,7 @@ pub fn format_datetime_offset(val: &Option<DateTimeOffset>) -> Result<String> {
             let naive = NaiveDateTime::new(date, time);
 
             let dto: ChronosDateTime<Utc> = naive.and_utc();
-            Ok(dto.format("'%Y-%m-%d %H:%M:%S %z'").to_string())
+            Ok(dto.format("'%Y-%m-%d %H:%M:%S%.f'").to_string())
         }
         None => Ok("NULL".to_string()),
     }
@@ -346,5 +346,91 @@ mod tests {
     fn test_format_datetime_offset_none() {
         let result = format_datetime_offset(&None).unwrap();
         assert_eq!(result, "NULL");
+    }
+
+    // Task 11: Binary value formatting
+    #[test]
+    fn test_format_binary_value_unquoted() {
+        let result = format_column_value(ColumnData::Binary(Some(vec![0xFF, 0xAB].into()))).unwrap();
+        assert_eq!(result, "0xffab");
+    }
+
+    #[test]
+    fn test_format_binary_empty() {
+        let result = format_column_value(ColumnData::Binary(Some(vec![].into()))).unwrap();
+        assert_eq!(result, "0x");
+    }
+
+    // Task 12: Bit and U8 NULL handling
+    #[test]
+    fn test_format_bit_null() {
+        assert_eq!(format_column_value(ColumnData::Bit(None)).unwrap(), "NULL");
+    }
+
+    #[test]
+    fn test_format_bit_true() {
+        assert_eq!(format_column_value(ColumnData::Bit(Some(true))).unwrap(), "1");
+    }
+
+    #[test]
+    fn test_format_bit_false() {
+        assert_eq!(format_column_value(ColumnData::Bit(Some(false))).unwrap(), "0");
+    }
+
+    #[test]
+    fn test_format_u8_null() {
+        assert_eq!(format_column_value(ColumnData::U8(None)).unwrap(), "NULL");
+    }
+
+    #[test]
+    fn test_format_u8_value() {
+        assert_eq!(format_column_value(ColumnData::U8(Some(42))).unwrap(), "42");
+    }
+
+    // Task 13: Float quoting
+    #[test]
+    fn test_format_f32_unquoted() {
+        let result = format_column_value(ColumnData::F32(Some(3.14))).unwrap();
+        assert!(!result.starts_with('\''), "F32 should not be quoted: {}", result);
+    }
+
+    #[test]
+    fn test_format_f64_unquoted() {
+        let result = format_column_value(ColumnData::F64(Some(2.718))).unwrap();
+        assert!(!result.starts_with('\''), "F64 should not be quoted: {}", result);
+    }
+
+    #[test]
+    fn test_format_f32_null() {
+        assert_eq!(format_column_value(ColumnData::F32(None)).unwrap(), "NULL");
+    }
+
+    #[test]
+    fn test_format_f64_null() {
+        assert_eq!(format_column_value(ColumnData::F64(None)).unwrap(), "NULL");
+    }
+
+    // Task 14: datetime2 sub-second precision
+    #[test]
+    fn test_format_datetime2_fractional_seconds() {
+        let dt = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2023, 6, 15).unwrap(),
+            NaiveTime::from_hms_micro_opt(14, 30, 45, 123456).unwrap(),
+        );
+        let formatted = dt.format("'%Y-%m-%d %H:%M:%S%.f'").to_string();
+        assert!(formatted.contains("14:30:45.123456"), "Got: {}", formatted);
+    }
+
+    // Task 15: SmallDateTime minutes
+    #[test]
+    fn test_from_minutes_90_is_1h30m() {
+        let time = from_minutes(90).unwrap();
+        assert_eq!(time, NaiveTime::from_hms_opt(1, 30, 0).unwrap());
+    }
+
+    #[test]
+    fn test_from_minutes_1440_is_invalid() {
+        let result = from_minutes(1440);
+        assert!(result.is_err());
     }
 }
