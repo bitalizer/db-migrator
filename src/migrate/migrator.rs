@@ -1,36 +1,31 @@
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Error, Result};
+use anyhow::{Context, Error, Result, bail};
 use log::info;
 use tokio::spawn;
-use tokio::sync::{watch, Semaphore};
+use tokio::sync::{Semaphore, watch};
 use tokio::time::Instant;
 
 use crate::common::errors::MigrationError;
 use crate::common::helpers::format_snake_case;
-use crate::extract::extractor::DatabaseExtractor;
-use crate::insert::inserter::DatabaseInserter;
+use crate::extract::traits::Extractor;
 use crate::insert::table_action::TableAction;
+use crate::insert::traits::Inserter;
 use crate::mappings::Mappings;
 use crate::migrate::constraints_creator::ConstraintsCreator;
 use crate::migrate::migration_options::MigrationOptions;
 use crate::migrate::migration_result::MigrationResult;
 use crate::migrate::table_migrator::TableMigrator;
 
-pub struct DatabaseMigrator {
-    extractor: DatabaseExtractor,
-    inserter: DatabaseInserter,
+pub struct DatabaseMigrator<E: Extractor, I: Inserter> {
+    extractor: E,
+    inserter: I,
     mappings: Mappings,
     options: MigrationOptions,
 }
 
-impl DatabaseMigrator {
-    pub fn new(
-        extractor: DatabaseExtractor,
-        inserter: DatabaseInserter,
-        mappings: Mappings,
-        options: MigrationOptions,
-    ) -> Self {
+impl<E: Extractor, I: Inserter> DatabaseMigrator<E, I> {
+    pub fn new(extractor: E, inserter: I, mappings: Mappings, options: MigrationOptions) -> Self {
         DatabaseMigrator {
             extractor,
             inserter,
@@ -39,7 +34,7 @@ impl DatabaseMigrator {
         }
     }
 
-    pub async fn run(&mut self) -> Result<()> {
+    pub async fn run(&self) -> Result<()> {
         info!("Running table migrator");
 
         let config_send_packet_size = self.options.max_packet_bytes;
@@ -52,7 +47,7 @@ impl DatabaseMigrator {
         Ok(())
     }
 
-    pub async fn migrate_tables(&mut self) -> Result<()> {
+    pub async fn migrate_tables(&self) -> Result<()> {
         let start_time = Instant::now();
 
         let (tables, formatted_tables) = self.fetch_and_format_tables().await?;
@@ -70,7 +65,7 @@ impl DatabaseMigrator {
         let successful_results = self.run_migration(&tables).await?;
 
         if self.options.constraints {
-            let mut constraints_creator = ConstraintsCreator::new(self.inserter.clone());
+            let constraints_creator = ConstraintsCreator::new(self.inserter.clone());
             constraints_creator
                 .run(successful_results, formatted_tables)
                 .await;
@@ -86,7 +81,7 @@ impl DatabaseMigrator {
         Ok(())
     }
 
-    async fn fetch_and_format_tables(&mut self) -> Result<(Vec<String>, Vec<String>)> {
+    async fn fetch_and_format_tables(&self) -> Result<(Vec<String>, Vec<String>)> {
         let mut tables = self.extractor.fetch_tables().await?;
 
         if tables.is_empty() {
@@ -95,14 +90,12 @@ impl DatabaseMigrator {
 
         check_missing_tables(&tables, &self.options.whitelisted_tables);
 
-        // Filter and keep only the whitelisted tables
         tables.retain(|table| self.options.whitelisted_tables.contains(table));
 
         if tables.is_empty() {
             bail!("No tables to process after filtering whitelisted tables");
         }
 
-        // Compute formatted names AFTER filtering to avoid referencing non-migrated tables
         let formatted_tables = format_table_names(&tables, self.options.format_snake_case);
 
         info!("Tables to migrate: {}", tables.join(", "));
@@ -110,16 +103,14 @@ impl DatabaseMigrator {
         Ok((tables, formatted_tables))
     }
 
-    async fn run_migration(&mut self, tables: &[String]) -> Result<Vec<MigrationResult>> {
+    async fn run_migration(&self, tables: &[String]) -> Result<Vec<MigrationResult>> {
         let semaphore = Arc::new(Semaphore::new(self.options.max_concurrent_tasks));
 
-        // Channel to signal cancellation when a task fails
         let (cancel_tx, cancel_rx) = watch::channel(false);
 
         let mut migration_tasks = Vec::new();
         let mut successful_results = Vec::new();
 
-        // Spawn tasks for all tables
         for table in tables {
             let semaphore_clone = Arc::clone(&semaphore);
             let mut cancel_rx = cancel_rx.clone();
@@ -132,23 +123,20 @@ impl DatabaseMigrator {
             let table_name = table.clone();
 
             let task = spawn(async move {
-                // Wait for semaphore permit, but also check for cancellation
                 let permit = tokio::select! {
                     permit = semaphore_clone.acquire() => {
                         permit.map_err(|_| anyhow::anyhow!("Semaphore closed"))?
                     }
                     _ = cancel_rx.changed() => {
-                        // Another task failed, skip this table
                         return Ok(None);
                     }
                 };
 
-                // Check if cancelled before starting work
                 if *cancel_rx.borrow() {
                     return Ok(None);
                 }
 
-                let mut table_migrator = TableMigrator::new(extractor, inserter, mappings, options);
+                let table_migrator = TableMigrator::new(extractor, inserter, mappings, options);
 
                 let result = table_migrator
                     .migrate_table(&table)
@@ -162,7 +150,6 @@ impl DatabaseMigrator {
             migration_tasks.push((table_name, task));
         }
 
-        // Collect results as they complete, fail fast on first error
         let mut first_error: Option<Error> = None;
         let mut skipped_tables: Vec<String> = Vec::new();
 
@@ -174,12 +161,10 @@ impl DatabaseMigrator {
                     successful_results.push(migration_result);
                 }
                 Ok(Ok(None)) => {
-                    // Task was cancelled before starting
                     skipped_tables.push(table_name);
                 }
                 Ok(Err(err)) => {
                     if first_error.is_none() {
-                        // Signal all pending tasks to cancel
                         let _ = cancel_tx.send(true);
                         first_error = Some(err);
                     }

@@ -3,20 +3,20 @@ use futures::future::join_all;
 use tokio::spawn;
 
 use crate::common::helpers::print_error_chain;
-use crate::insert::inserter::DatabaseInserter;
+use crate::insert::traits::Inserter;
 use crate::migrate::migration_result::MigrationResult;
 
-pub struct ConstraintsCreator {
-    inserter: DatabaseInserter,
+pub struct ConstraintsCreator<I: Inserter> {
+    inserter: I,
 }
 
-impl ConstraintsCreator {
-    pub fn new(inserter: DatabaseInserter) -> Self {
+impl<I: Inserter> ConstraintsCreator<I> {
+    pub fn new(inserter: I) -> Self {
         ConstraintsCreator { inserter }
     }
 
     pub async fn run(
-        &mut self,
+        &self,
         successful_results: Vec<MigrationResult>,
         formatted_tables: Vec<String>,
     ) {
@@ -24,7 +24,7 @@ impl ConstraintsCreator {
             .into_iter()
             .filter(|migration_result| migration_result.created)
             .map(|migration_result| {
-                let mut inserter = self.inserter.clone();
+                let inserter = self.inserter.clone();
                 let formatted_tables = formatted_tables.clone();
                 let table_name = migration_result.table_name.clone();
                 let schema = migration_result.schema;

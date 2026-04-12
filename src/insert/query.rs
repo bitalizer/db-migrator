@@ -117,10 +117,10 @@ pub fn build_create_table_query(table_name: &str, schema: &[ColumnSchema]) -> St
                 }
             }
 
-            if let Some(constraint) = &column.constraints {
-                if *constraint == Constraint::PrimaryKey {
-                    result_str.push_str(" PRIMARY KEY");
-                }
+            if let Some(constraint) = &column.constraints
+                && *constraint == Constraint::PrimaryKey
+            {
+                result_str.push_str(" PRIMARY KEY");
             }
 
             result_str.push(' ');

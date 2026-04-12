@@ -64,7 +64,7 @@ async fn run(options: Args) -> Result<()> {
         whitelisted_tables: config.settings().whitelisted_tables.clone(),
     };
 
-    let mut migrator = DatabaseMigrator::new(extractor, inserter, mappings, migration_options);
+    let migrator = DatabaseMigrator::new(extractor, inserter, mappings, migration_options);
 
     migrator.run().await.with_context(|| "Migration failed")?;
 

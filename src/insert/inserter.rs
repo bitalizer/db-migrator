@@ -1,4 +1,5 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
+use async_trait::async_trait;
 use sqlx::{Acquire, Executor, MySqlPool, Row};
 
 use crate::common::sql::{escape_mysql_identifier, escape_sql_string};
@@ -6,6 +7,7 @@ use crate::common::sql::{escape_mysql_identifier, escape_sql_string};
 use crate::common::schema::ColumnSchema;
 use crate::insert::query::{build_create_constraints, build_create_table_query, build_reset_query};
 use crate::insert::table_action::TableAction;
+use crate::insert::traits::Inserter;
 
 #[derive(Clone)]
 pub struct DatabaseInserter {
@@ -17,7 +19,18 @@ impl DatabaseInserter {
         DatabaseInserter { pool }
     }
 
-    pub async fn create_table(&mut self, table_name: &str, schema: &[ColumnSchema]) -> Result<()> {
+    async fn get_all_tables(&self) -> Result<Vec<String>> {
+        let rows = sqlx::query("SHOW TABLES").fetch_all(&self.pool).await?;
+
+        let table_names: Vec<String> = rows.iter().map(|row| row.get::<String, _>(0)).collect();
+
+        Ok(table_names)
+    }
+}
+
+#[async_trait]
+impl Inserter for DatabaseInserter {
+    async fn create_table(&self, table_name: &str, schema: &[ColumnSchema]) -> Result<()> {
         let create_table_query = build_create_table_query(table_name, schema);
 
         debug!("Creating table {}", table_name);
@@ -31,8 +44,8 @@ impl DatabaseInserter {
         Ok(())
     }
 
-    pub async fn create_constraints(
-        &mut self,
+    async fn create_constraints(
+        &self,
         table_name: &str,
         schema: &[ColumnSchema],
         formatted_tables: &[String],
@@ -72,7 +85,7 @@ impl DatabaseInserter {
         Ok(())
     }
 
-    pub async fn execute_transactional_query(&mut self, query: &str) -> Result<()> {
+    async fn execute_transactional_query(&self, query: &str) -> Result<()> {
         let mut connection = self.pool.acquire().await?;
         let mut transaction = connection.begin().await?;
 
@@ -97,7 +110,7 @@ impl DatabaseInserter {
         Ok(())
     }
 
-    pub async fn get_max_allowed_packet(&mut self) -> Result<usize> {
+    async fn get_max_allowed_packet(&self) -> Result<usize> {
         let query = "SELECT @@max_allowed_packet";
 
         let max_allowed_packet: u32 = sqlx::query_scalar(query).fetch_one(&self.pool).await?;
@@ -105,10 +118,10 @@ impl DatabaseInserter {
         Ok(max_allowed_packet as usize)
     }
 
-    pub async fn reset_tables(&mut self, tables: &[String], action: TableAction) -> Result<()> {
-        let mut all_tables = self.get_all_tables().await.with_context(|| {
-            "Resetting tables encountered an error, cannot obtain existing tables"
-        })?;
+    async fn reset_tables(&self, tables: &[String], action: TableAction) -> Result<()> {
+        let mut all_tables = self.get_all_tables().await.with_context(
+            || "Resetting tables encountered an error, cannot obtain existing tables",
+        )?;
 
         // Filter and keep only the tables that exist in the database and are also present in the `tables` slice
         all_tables.retain(|table| {
@@ -136,15 +149,7 @@ impl DatabaseInserter {
         Ok(())
     }
 
-    async fn get_all_tables(&mut self) -> Result<Vec<String>> {
-        let rows = sqlx::query("SHOW TABLES").fetch_all(&self.pool).await?;
-
-        let table_names: Vec<String> = rows.iter().map(|row| row.get::<String, _>(0)).collect();
-
-        Ok(table_names)
-    }
-
-    pub async fn table_exists(&mut self, table_name: &str) -> Result<bool> {
+    async fn table_exists(&self, table_name: &str) -> Result<bool> {
         let query = format!(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '{}'",
             escape_sql_string(table_name)
@@ -155,7 +160,7 @@ impl DatabaseInserter {
         Ok(count > 0)
     }
 
-    pub async fn table_rows_count(&mut self, table_name: &str) -> Result<i64> {
+    async fn table_rows_count(&self, table_name: &str) -> Result<i64> {
         let query = format!(
             "SELECT COUNT(*) FROM {}",
             escape_mysql_identifier(table_name)
