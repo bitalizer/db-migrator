@@ -5,3 +5,5 @@ pub mod mssql_type;
 pub mod mysql_type;
 pub mod schema;
 pub mod sql;
+pub mod target_schema;
+pub mod type_mapping_entry;
