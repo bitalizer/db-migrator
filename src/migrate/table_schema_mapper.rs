@@ -3,6 +3,7 @@ use anyhow::{Result, anyhow};
 use crate::common::constraints::Constraint;
 use crate::common::errors::MigrationError;
 use crate::common::helpers::format_snake_case;
+use crate::common::mssql_type::MssqlType;
 use crate::common::schema::ColumnSchema;
 use crate::mappings::Mappings;
 
@@ -17,9 +18,9 @@ impl TableSchemaMapper {
         table_schema
             .iter()
             .map(|column| {
-                let mapping = mappings.get(&column.data_type).ok_or_else(|| {
+                let mapping = mappings.get(column.data_type.as_str()).ok_or_else(|| {
                     anyhow!(MigrationError::MappingNotFound {
-                        data_type: column.data_type.clone(),
+                        data_type: column.data_type.to_string(),
                     })
                 })?;
 
@@ -30,7 +31,12 @@ impl TableSchemaMapper {
                 };
 
                 let new_constraints = column.constraints.clone();
-                let new_data_type = mapping.to_type.clone();
+                let new_data_type = MssqlType::from_str(&mapping.to_type).ok_or_else(|| {
+                    anyhow!(
+                        "Mapped type '{}' for column '{}' is not a valid MssqlType",
+                        mapping.to_type, column.column_name
+                    )
+                })?;
 
                 // Check if new_constraints contain foreign key and format snake case
                 let updated_constraints = if let Some(new_constraints) = new_constraints {
@@ -99,6 +105,7 @@ impl TableSchemaMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::mssql_type::MssqlType;
     use crate::mappings::Mapping;
 
     fn make_mappings(entries: Vec<(&str, &str, bool)>) -> Mappings {
@@ -121,10 +128,10 @@ mod tests {
         )
     }
 
-    fn make_column(name: &str, data_type: &str) -> ColumnSchema {
+    fn make_column(name: &str, data_type: MssqlType) -> ColumnSchema {
         ColumnSchema {
             column_name: name.to_string(),
-            data_type: data_type.to_string(),
+            data_type,
             character_maximum_length: None,
             numeric_precision: None,
             numeric_scale: None,
@@ -136,18 +143,18 @@ mod tests {
     #[test]
     fn test_map_schema_basic() {
         let mappings = make_mappings(vec![("int", "int", false)]);
-        let schema = vec![make_column("id", "int")];
+        let schema = vec![make_column("id", MssqlType::Int)];
 
         let result = TableSchemaMapper::map_schema(&mappings, &schema, false).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].column_name, "id");
-        assert_eq!(result[0].data_type, "int");
+        assert_eq!(result[0].data_type, MssqlType::Int);
     }
 
     #[test]
     fn test_map_schema_missing_mapping() {
         let mappings = make_mappings(vec![("int", "int", false)]);
-        let schema = vec![make_column("data", "xml")];
+        let schema = vec![make_column("data", MssqlType::Xml)];
 
         let result = TableSchemaMapper::map_schema(&mappings, &schema, false);
         assert!(result.is_err());
@@ -157,7 +164,7 @@ mod tests {
     #[test]
     fn test_map_schema_snake_case() {
         let mappings = make_mappings(vec![("varchar", "varchar", true)]);
-        let schema = vec![make_column("UserName", "varchar")];
+        let schema = vec![make_column("UserName", MssqlType::Varchar)];
 
         let result = TableSchemaMapper::map_schema(&mappings, &schema, true).unwrap();
         assert_eq!(result[0].column_name, "user_name");
@@ -166,7 +173,7 @@ mod tests {
     #[test]
     fn test_map_schema_preserves_nullable() {
         let mappings = make_mappings(vec![("int", "int", false)]);
-        let mut col = make_column("id", "int");
+        let mut col = make_column("id", MssqlType::Int);
         col.is_nullable = false;
 
         let result = TableSchemaMapper::map_schema(&mappings, &[col], false).unwrap();
@@ -176,7 +183,7 @@ mod tests {
     #[test]
     fn test_map_schema_type_parameters_with_length() {
         let mappings = make_mappings(vec![("varchar", "varchar", true)]);
-        let mut col = make_column("name", "varchar");
+        let mut col = make_column("name", MssqlType::Varchar);
         col.character_maximum_length = Some(255);
 
         let result = TableSchemaMapper::map_schema(&mappings, &[col], false).unwrap();
@@ -185,8 +192,8 @@ mod tests {
 
     #[test]
     fn test_map_schema_type_parameters_max_length_becomes_65535() {
-        let mappings = make_mappings(vec![("nvarchar", "longtext", true)]);
-        let mut col = make_column("description", "nvarchar");
+        let mappings = make_mappings(vec![("nvarchar", "nvarchar", true)]);
+        let mut col = make_column("description", MssqlType::NVarchar);
         col.character_maximum_length = Some(-1); // MSSQL uses -1 for MAX
 
         let result = TableSchemaMapper::map_schema(&mappings, &[col], false).unwrap();
@@ -196,7 +203,7 @@ mod tests {
     #[test]
     fn test_map_schema_no_type_parameters_clears_precision() {
         let mappings = make_mappings(vec![("text", "text", false)]);
-        let mut col = make_column("body", "text");
+        let mut col = make_column("body", MssqlType::Text);
         col.numeric_precision = Some(10);
         col.numeric_scale = Some(2);
         col.character_maximum_length = Some(500);
@@ -210,7 +217,7 @@ mod tests {
     #[test]
     fn test_map_schema_foreign_key_snake_case() {
         let mappings = make_mappings(vec![("int", "int", false)]);
-        let mut col = make_column("UserId", "int");
+        let mut col = make_column("UserId", MssqlType::Int);
         col.constraints = Some(Constraint::ForeignKey {
             referenced_table: "UserAccounts".to_string(),
             referenced_column: "AccountId".to_string(),
@@ -232,7 +239,7 @@ mod tests {
     #[test]
     fn test_map_schema_foreign_key_no_format() {
         let mappings = make_mappings(vec![("int", "int", false)]);
-        let mut col = make_column("UserId", "int");
+        let mut col = make_column("UserId", MssqlType::Int);
         col.constraints = Some(Constraint::ForeignKey {
             referenced_table: "UserAccounts".to_string(),
             referenced_column: "AccountId".to_string(),
@@ -254,7 +261,7 @@ mod tests {
     #[test]
     fn test_map_schema_zero_scale_becomes_none() {
         let mappings = make_mappings(vec![("int", "int", true)]);
-        let mut col = make_column("count", "int");
+        let mut col = make_column("count", MssqlType::Int);
         col.numeric_precision = Some(10);
         col.numeric_scale = Some(0);
 
