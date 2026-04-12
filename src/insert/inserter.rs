@@ -43,15 +43,24 @@ impl DatabaseInserter {
             let mut connection = self.pool.acquire().await?;
             let mut transaction = connection.begin().await?;
 
-            transaction.execute("SET FOREIGN_KEY_CHECKS=0".to_string().as_str());
+            transaction
+                .execute("SET FOREIGN_KEY_CHECKS=0")
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to disable foreign key checks for table {}",
+                        table_name
+                    )
+                })?;
 
             if let Err(err) = transaction.execute(query.as_str()).await {
                 warn!(
                     "Constraints creation failed for table: {}, query: '{}'. Error: {}",
                     table_name, query, err
                 );
-                transaction.execute("SET FOREIGN_KEY_CHECKS=1".to_string().as_str());
-                transaction.rollback().await?; // Rollback if the transaction fails
+                // Best-effort re-enable FK checks before rollback
+                let _ = transaction.execute("SET FOREIGN_KEY_CHECKS=1").await;
+                transaction.rollback().await?;
             } else {
                 transaction.commit().await?;
                 info!("Table {} constraints created successfully", table_name);
@@ -67,14 +76,18 @@ impl DatabaseInserter {
 
         transaction.execute("SET FOREIGN_KEY_CHECKS=0").await?;
 
-        if let Err(_err) = transaction.execute(query).await {
+        if let Err(err) = transaction.execute(query).await {
             transaction.rollback().await?;
             let preview = if query.is_empty() {
                 "EMPTY QUERY".to_string()
             } else {
                 query.chars().take(100).collect()
             };
-            return Err(anyhow!("Cannot execute transaction query: {}", preview));
+            return Err(anyhow!(
+                "Cannot execute transaction query: {}. Error: {}",
+                preview,
+                err
+            ));
         }
 
         transaction.execute("SET FOREIGN_KEY_CHECKS=1").await?;
@@ -124,10 +137,7 @@ impl DatabaseInserter {
     async fn get_all_tables(&mut self) -> Result<Vec<String>> {
         let rows = sqlx::query("SHOW TABLES").fetch_all(&self.pool).await?;
 
-        let table_names: Vec<String> = rows
-            .iter()
-            .map(|row| row.get::<String, _>(0)) // Get the first column value as a String
-            .collect();
+        let table_names: Vec<String> = rows.iter().map(|row| row.get::<String, _>(0)).collect();
 
         Ok(table_names)
     }

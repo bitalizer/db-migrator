@@ -2,16 +2,15 @@
 extern crate log;
 
 use std::io::Write;
-use std::{env, fs, thread};
+use std::{fs, process, thread};
 
 use anyhow::{Context, Result};
 use chrono::Local;
-use env_logger::Env;
-use structopt::StructOpt;
+use clap::Parser;
 use toml::Value;
 
 use crate::args::Args;
-use crate::config::{Config, SettingsConfig};
+use crate::config::Config;
 use crate::connection::{DatabaseConnectionFactory, SqlxMySqlConnection, TiberiusConnection};
 use crate::extract::extractor::DatabaseExtractor;
 use crate::insert::inserter::DatabaseInserter;
@@ -29,22 +28,20 @@ mod mappings;
 mod migrate;
 
 #[tokio::main(flavor = "multi_thread")]
-async fn main() -> Result<()> {
-    if let Err(errors) = init().await.with_context(|| "Initialization failed") {
-        for (index, error) in errors.chain().enumerate() {
-            error!("└> {} - {}", index, error);
-        }
-    }
-
-    Ok(())
-}
-
-async fn init() -> Result<()> {
-    let options = Args::from_args();
+async fn main() {
+    let options = Args::parse();
 
     initialize_logger(options.verbose, options.quiet);
 
-    // Parse config
+    if let Err(errors) = run(options).await {
+        for (index, error) in errors.chain().enumerate() {
+            error!("└> {} - {}", index, error);
+        }
+        process::exit(1);
+    }
+}
+
+async fn run(options: Args) -> Result<()> {
     let config = load_config().context("Failed to load config file")?;
     let mappings = load_mappings().context("Failed to load mappings file")?;
 
@@ -55,14 +52,21 @@ async fn init() -> Result<()> {
     let tiberius_connection = create_tiberius_connection(&config, max_connections).await?;
     let sqlx_connection = create_sqlx_connection(&config, max_connections).await?;
 
-    run_migration(
-        tiberius_connection,
-        sqlx_connection,
-        mappings,
-        config.settings().clone(),
-        options,
-    )
-    .await?;
+    let extractor = DatabaseExtractor::new(tiberius_connection.pool);
+    let inserter = DatabaseInserter::new(sqlx_connection.pool);
+
+    let migration_options = MigrationOptions {
+        drop: options.drop,
+        constraints: options.constraints,
+        format_snake_case: options.format,
+        max_concurrent_tasks: options.parallelism,
+        max_packet_bytes: config.settings().max_packet_bytes,
+        whitelisted_tables: config.settings().whitelisted_tables.clone(),
+    };
+
+    let mut migrator = DatabaseMigrator::new(extractor, inserter, mappings, migration_options);
+
+    migrator.run().await.with_context(|| "Migration failed")?;
 
     Ok(())
 }
@@ -87,49 +91,17 @@ async fn create_sqlx_connection(
     Ok(sqlx_connection)
 }
 
-async fn run_migration(
-    tiberius_connection: TiberiusConnection,
-    sqlx_connection: SqlxMySqlConnection,
-    mappings: Mappings,
-    settings: SettingsConfig,
-    options: Args,
-) -> Result<()> {
-    let extractor = DatabaseExtractor::new(tiberius_connection.pool);
-    let inserter = DatabaseInserter::new(sqlx_connection.pool);
-
-    let migration_options = MigrationOptions {
-        drop: options.drop,
-        constraints: options.constraints,
-        format_snake_case: options.format,
-        max_concurrent_tasks: options.parallelism,
-        max_packet_bytes: settings.max_packet_bytes,
-        whitelisted_tables: settings.whitelisted_tables,
+fn initialize_logger(verbose: bool, quiet: bool) {
+    let log_level = if quiet {
+        log::LevelFilter::Warn
+    } else if verbose {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Info
     };
 
-    let mut migrator = DatabaseMigrator::new(extractor, inserter, mappings, migration_options);
-
-    let migration_result = migrator.run().await.with_context(|| "Migration failed");
-
-    if let Err(errors) = migration_result {
-        for (index, error) in errors.chain().enumerate() {
-            error!("└> {} - {}", index, error);
-        }
-    }
-
-    Ok(())
-}
-
-fn initialize_logger(verbose: bool, quiet: bool) {
-    // Set the `RUST_LOG` environment variable to control the logging level
-
-    if quiet {
-        env::set_var("RUST_LOG", "warn");
-    } else {
-        env::set_var("RUST_LOG", if verbose { "debug" } else { "info" });
-    }
-
-    // Initialize the logger with the desired format and additional configuration
-    env_logger::Builder::from_env(Env::default().default_filter_or("info"))
+    env_logger::Builder::new()
+        .filter_level(log_level)
         .filter_module("tiberius", log::LevelFilter::Error)
         .filter_module("sqlx", log::LevelFilter::Error)
         .format(|buf, record| {

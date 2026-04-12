@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Error, Result};
-use futures::future::join_all;
 use log::info;
 use tokio::spawn;
-use tokio::sync::Semaphore;
+use tokio::sync::{watch, Semaphore};
 use tokio::time::Instant;
 
-use crate::common::helpers::{format_snake_case, print_error_chain};
+use crate::common::errors::MigrationError;
+use crate::common::helpers::format_snake_case;
 use crate::extract::extractor::DatabaseExtractor;
 use crate::insert::inserter::DatabaseInserter;
 use crate::insert::table_action::TableAction;
@@ -45,7 +45,7 @@ impl DatabaseMigrator {
         let config_send_packet_size = self.options.max_packet_bytes;
         let max_allowed_packet = self.inserter.get_max_allowed_packet().await?;
 
-        check_packet_size(config_send_packet_size, max_allowed_packet).await?;
+        check_packet_size(config_send_packet_size, max_allowed_packet)?;
 
         self.migrate_tables().await?;
 
@@ -67,13 +67,7 @@ impl DatabaseMigrator {
             .reset_tables(&formatted_tables, action)
             .await?;
 
-        let migration_results = self.run_migration(tables).await;
-        let (successful_results, errors) = process_migration_results(migration_results).await;
-
-        // Handle errors
-        for err in errors {
-            print_error_chain(&err);
-        }
+        let successful_results = self.run_migration(&tables).await?;
 
         if self.options.constraints {
             let mut constraints_creator = ConstraintsCreator::new(self.inserter.clone());
@@ -93,8 +87,7 @@ impl DatabaseMigrator {
     }
 
     async fn fetch_and_format_tables(&mut self) -> Result<(Vec<String>, Vec<String>)> {
-        let mut tables = self.extractor.fetch_tables().await?; // Fetch the list of tables from input database
-        let formatted_tables = format_table_names(&tables, self.options.format_snake_case); // Format to snake case if required
+        let mut tables = self.extractor.fetch_tables().await?;
 
         if tables.is_empty() {
             bail!("No tables to process");
@@ -109,35 +102,51 @@ impl DatabaseMigrator {
             bail!("No tables to process after filtering whitelisted tables");
         }
 
+        // Compute formatted names AFTER filtering to avoid referencing non-migrated tables
+        let formatted_tables = format_table_names(&tables, self.options.format_snake_case);
+
         info!("Tables to migrate: {}", tables.join(", "));
 
         Ok((tables, formatted_tables))
     }
 
-    async fn run_migration(&mut self, tables: Vec<String>) -> Vec<Result<MigrationResult, Error>> {
-        // Create a semaphore to limit the number of concurrent tasks
+    async fn run_migration(&mut self, tables: &[String]) -> Result<Vec<MigrationResult>> {
         let semaphore = Arc::new(Semaphore::new(self.options.max_concurrent_tasks));
 
-        // Create a Vec to store the JoinHandles for tasks
-        let mut migration_tasks = Vec::new();
+        // Channel to signal cancellation when a task fails
+        let (cancel_tx, cancel_rx) = watch::channel(false);
 
-        // Spawn a task for each table to fetch the rows concurrently
+        let mut migration_tasks = Vec::new();
+        let mut successful_results = Vec::new();
+
+        // Spawn tasks for all tables
         for table in tables {
-            // Clone the shared semaphore for each task
             let semaphore_clone = Arc::clone(&semaphore);
+            let mut cancel_rx = cancel_rx.clone();
 
             let extractor = self.extractor.clone();
             let inserter = self.inserter.clone();
             let mappings = self.mappings.clone();
             let options = self.options.clone();
+            let table = table.clone();
+            let table_name = table.clone();
 
-            // Spawn a task for each table
             let task = spawn(async move {
-                // Acquire a semaphore permit before starting the task
-                let permit = semaphore_clone
-                    .acquire()
-                    .await
-                    .expect("Failed to acquire semaphore permit");
+                // Wait for semaphore permit, but also check for cancellation
+                let permit = tokio::select! {
+                    permit = semaphore_clone.acquire() => {
+                        permit.map_err(|_| anyhow::anyhow!("Semaphore closed"))?
+                    }
+                    _ = cancel_rx.changed() => {
+                        // Another task failed, skip this table
+                        return Ok(None);
+                    }
+                };
+
+                // Check if cancelled before starting work
+                if *cancel_rx.borrow() {
+                    return Ok(None);
+                }
 
                 let mut table_migrator = TableMigrator::new(extractor, inserter, mappings, options);
 
@@ -146,28 +155,62 @@ impl DatabaseMigrator {
                     .await
                     .with_context(|| format!("Error while migrating table: {}", table));
 
-                // Release the semaphore permit when the task is done (whether successful or not)
                 drop(permit);
-                result
+                result.map(Some)
             });
 
-            migration_tasks.push(task);
+            migration_tasks.push((table_name, task));
         }
 
-        let migration_results: Vec<Result<MigrationResult, Error>> = join_all(migration_tasks)
-            .await
-            .into_iter()
-            .map(|join_handle_result| join_handle_result.expect("Error in JoinHandle"))
-            .collect();
+        // Collect results as they complete, fail fast on first error
+        let mut first_error: Option<Error> = None;
+        let mut skipped_tables: Vec<String> = Vec::new();
 
-        migration_results
+        for (table_name, task) in migration_tasks {
+            let join_result = task.await;
+
+            match join_result {
+                Ok(Ok(Some(migration_result))) => {
+                    successful_results.push(migration_result);
+                }
+                Ok(Ok(None)) => {
+                    // Task was cancelled before starting
+                    skipped_tables.push(table_name);
+                }
+                Ok(Err(err)) => {
+                    if first_error.is_none() {
+                        // Signal all pending tasks to cancel
+                        let _ = cancel_tx.send(true);
+                        first_error = Some(err);
+                    }
+                }
+                Err(join_err) => {
+                    if first_error.is_none() {
+                        let _ = cancel_tx.send(true);
+                        first_error = Some(anyhow::anyhow!(MigrationError::TaskPanicked {
+                            table: join_err.to_string(),
+                        }));
+                    }
+                }
+            }
+        }
+
+        if let Some(err) = first_error {
+            if !skipped_tables.is_empty() {
+                warn!(
+                    "Migration aborted. Skipped {} remaining table(s): {}",
+                    skipped_tables.len(),
+                    skipped_tables.join(", ")
+                );
+            }
+            return Err(err);
+        }
+
+        Ok(successful_results)
     }
 }
 
-async fn check_packet_size(
-    config_send_packet_size: usize,
-    max_allowed_packet: usize,
-) -> Result<()> {
+fn check_packet_size(config_send_packet_size: usize, max_allowed_packet: usize) -> Result<()> {
     debug!(
         "Max allowed packet size - Current: {} MB | Maximum {} MB",
         config_send_packet_size as f64 / 1_048_576.0,
@@ -175,21 +218,22 @@ async fn check_packet_size(
     );
 
     if config_send_packet_size > max_allowed_packet {
-        bail!("Configured send packet size exceeds maximum allowed packet size")
+        bail!(MigrationError::PacketSizeTooLarge {
+            configured: config_send_packet_size,
+            maximum: max_allowed_packet,
+        })
     }
 
     Ok(())
 }
 
 fn check_missing_tables(tables: &[String], whitelisted_tables: &[String]) {
-    // Check for missing tables in whitelisted_tables
     let missing_tables: Vec<_> = whitelisted_tables
         .iter()
         .filter(|table| !tables.contains(table))
         .cloned()
         .collect();
 
-    // If there are missing tables, print a warning
     if !missing_tables.is_empty() {
         let missing_tables_str = missing_tables.join(", ");
         warn!(
@@ -208,20 +252,4 @@ fn format_table_names(tables: &[String], format: bool) -> Vec<String> {
     } else {
         tables.to_vec()
     }
-}
-
-// Helper function to process migration results and separate successful results from errors
-async fn process_migration_results(
-    migration_results: Vec<Result<MigrationResult, Error>>,
-) -> (Vec<MigrationResult>, Vec<Error>) {
-    let (successful_results, errors): (Vec<_>, Vec<_>) =
-        migration_results.into_iter().partition(Result::is_ok);
-
-    let successful_results: Vec<MigrationResult> =
-        successful_results.into_iter().map(Result::unwrap).collect();
-
-    (
-        successful_results,
-        errors.into_iter().map(Result::unwrap_err).collect(),
-    )
 }
