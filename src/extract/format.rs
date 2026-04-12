@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use chrono::DateTime as ChronosDateTime;
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use hex::encode;
@@ -5,31 +6,36 @@ use tiberius::numeric::Numeric;
 use tiberius::time::{Date, DateTime, DateTime2, DateTimeOffset, SmallDateTime, Time};
 use tiberius::{ColumnData, Row};
 
-pub fn format_row_values(row: Row) -> Vec<String> {
+use crate::common::errors::MigrationError;
+
+pub fn format_row_values(row: Row) -> Result<Vec<String>> {
     row.into_iter().map(format_column_value).collect()
 }
 
-pub fn format_column_value(item: ColumnData) -> String {
+pub fn format_column_value(item: ColumnData) -> Result<String> {
     match item {
-        ColumnData::Binary(Some(val)) => format!("'0x{}'", encode(val)),
-        ColumnData::Binary(None) => "NULL".to_string(),
-        ColumnData::Bit(val) => val.unwrap_or_default().to_string(),
-        ColumnData::I16(val) => format_number_value(val),
-        ColumnData::I32(val) => format_number_value(val),
-        ColumnData::I64(val) => format_number_value(val),
-        ColumnData::F32(val) => format_string_value(val),
-        ColumnData::F64(val) => format_string_value(val),
-        ColumnData::Guid(val) => format_string_value(val),
-        ColumnData::Numeric(val) => format_numeric_value(val),
-        ColumnData::String(val) => format_string_value(val),
+        ColumnData::Binary(Some(val)) => Ok(format!("'0x{}'", encode(val))),
+        ColumnData::Binary(None) => Ok("NULL".to_string()),
+        ColumnData::Bit(val) => Ok(val.unwrap_or_default().to_string()),
+        ColumnData::I16(val) => Ok(format_number_value(val)),
+        ColumnData::I32(val) => Ok(format_number_value(val)),
+        ColumnData::I64(val) => Ok(format_number_value(val)),
+        ColumnData::F32(val) => Ok(format_string_value(val)),
+        ColumnData::F64(val) => Ok(format_string_value(val)),
+        ColumnData::Guid(val) => Ok(format_string_value(val)),
+        ColumnData::Numeric(val) => Ok(format_numeric_value(val)),
+        ColumnData::String(val) => Ok(format_string_value(val)),
         ColumnData::Time(ref val) => format_time(val),
         ColumnData::Date(ref val) => format_date(val),
         ColumnData::SmallDateTime(ref val) => format_small_datetime(val),
         ColumnData::DateTime(ref val) => format_datetime(val),
         ColumnData::DateTime2(ref val) => format_datetime2(val),
         ColumnData::DateTimeOffset(ref val) => format_datetime_offset(val),
-        ColumnData::U8(val) => val.unwrap_or_default().to_string(),
-        ColumnData::Xml(val) => val.unwrap().as_ref().to_string(),
+        ColumnData::U8(val) => Ok(val.unwrap_or_default().to_string()),
+        ColumnData::Xml(val) => match val {
+            Some(xml) => Ok(format_string_value(Some(xml.as_ref().to_string()))),
+            None => Ok("NULL".to_string()),
+        },
     }
 }
 
@@ -63,88 +69,130 @@ where
         .unwrap_or_else(|| "NULL".to_string())
 }
 
-pub fn format_time(val: &Option<Time>) -> String {
-    val.map(|time| {
-        let ns = time.increments() as i64 * 10i64.pow(9 - time.scale() as u32);
-        let time = NaiveTime::from_hms_opt(0, 0, 0).unwrap() + Duration::nanoseconds(ns);
-        format!("{}", time.format("'%H:%M:%S'"))
-    })
-    .unwrap_or_else(|| "NULL".to_string())
+pub fn format_time(val: &Option<Time>) -> Result<String> {
+    match val {
+        Some(time) => {
+            let ns = time.increments() as i64 * 10i64.pow(9 - time.scale() as u32);
+            let base_time = NaiveTime::from_hms_opt(0, 0, 0).ok_or_else(|| {
+                MigrationError::InvalidDateTimeValue {
+                    reason: "failed to create base time 00:00:00".to_string(),
+                }
+            })?;
+            let time = base_time + Duration::nanoseconds(ns);
+            Ok(format!("{}", time.format("'%H:%M:%S'")))
+        }
+        None => Ok("NULL".to_string()),
+    }
 }
 
-pub fn format_date(val: &Option<Date>) -> String {
-    val.map(|dt| {
-        let datetime = from_days(dt.days() as i64, 1);
-        datetime.format("'%Y-%m-%d'").to_string()
-    })
-    .unwrap_or_else(|| "NULL".to_string())
+pub fn format_date(val: &Option<Date>) -> Result<String> {
+    match val {
+        Some(dt) => {
+            let datetime = from_days(dt.days() as i64, 1)?;
+            Ok(datetime.format("'%Y-%m-%d'").to_string())
+        }
+        None => Ok("NULL".to_string()),
+    }
 }
 
-pub fn format_datetime(val: &Option<DateTime>) -> String {
-    val.map(|dt| {
-        let datetime = NaiveDateTime::new(
-            from_days(dt.days() as i64, 1900),
-            from_sec_fragments(dt.seconds_fragments() as i64),
-        );
-        datetime.format("'%Y-%m-%d %H:%M:%S'").to_string()
-    })
-    .unwrap_or_else(|| "NULL".to_string())
+pub fn format_datetime(val: &Option<DateTime>) -> Result<String> {
+    match val {
+        Some(dt) => {
+            let date = from_days(dt.days() as i64, 1900)?;
+            let time = from_sec_fragments(dt.seconds_fragments() as i64)?;
+            let datetime = NaiveDateTime::new(date, time);
+            Ok(datetime.format("'%Y-%m-%d %H:%M:%S'").to_string())
+        }
+        None => Ok("NULL".to_string()),
+    }
 }
 
-pub fn format_datetime2(val: &Option<DateTime2>) -> String {
-    val.map(|dt| {
-        let datetime = NaiveDateTime::new(
-            from_days(dt.date().days() as i64, 1),
-            NaiveTime::from_hms_opt(0, 0, 0).unwrap()
-                + Duration::nanoseconds(
-                    dt.time().increments() as i64 * 10i64.pow(9 - dt.time().scale() as u32),
+pub fn format_datetime2(val: &Option<DateTime2>) -> Result<String> {
+    match val {
+        Some(dt) => {
+            let date = from_days(dt.date().days() as i64, 1)?;
+            let base_time = NaiveTime::from_hms_opt(0, 0, 0).ok_or_else(|| {
+                MigrationError::InvalidDateTimeValue {
+                    reason: "failed to create base time 00:00:00".to_string(),
+                }
+            })?;
+            let ns =
+                dt.time().increments() as i64 * 10i64.pow(9 - dt.time().scale() as u32);
+            let time = base_time + Duration::nanoseconds(ns);
+            let datetime = NaiveDateTime::new(date, time);
+            Ok(datetime.format("'%Y-%m-%d %H:%M:%S'").to_string())
+        }
+        None => Ok("NULL".to_string()),
+    }
+}
+
+pub fn format_small_datetime(val: &Option<SmallDateTime>) -> Result<String> {
+    match val {
+        Some(dt) => {
+            let date = from_days(dt.days() as i64, 1900)?;
+            let time = from_minutes(dt.seconds_fragments() as u32 * 60)?;
+            let datetime = NaiveDateTime::new(date, time);
+            Ok(datetime.format("'%Y-%m-%d %H:%M:%S'").to_string())
+        }
+        None => Ok("NULL".to_string()),
+    }
+}
+
+pub fn format_datetime_offset(val: &Option<DateTimeOffset>) -> Result<String> {
+    match val {
+        Some(dto) => {
+            let date = from_days(dto.datetime2().date().days() as i64, 1)?;
+            let ns = dto.datetime2().time().increments() as i64
+                * 10i64.pow(9 - dto.datetime2().time().scale() as u32);
+
+            let base_time = NaiveTime::from_hms_opt(0, 0, 0).ok_or_else(|| {
+                MigrationError::InvalidDateTimeValue {
+                    reason: "failed to create base time 00:00:00".to_string(),
+                }
+            })?;
+            let time = base_time + Duration::nanoseconds(ns)
+                - Duration::minutes(dto.offset() as i64);
+            let naive = NaiveDateTime::new(date, time);
+
+            let dto: ChronosDateTime<Utc> = ChronosDateTime::from_utc(naive, Utc);
+            Ok(dto.format("'%Y-%m-%d %H:%M:%S %z'").to_string())
+        }
+        None => Ok("NULL".to_string()),
+    }
+}
+
+pub fn from_days(days: i64, base_year: i32) -> Result<NaiveDate> {
+    let base = NaiveDate::from_ymd_opt(base_year, 1, 1).ok_or_else(|| {
+        MigrationError::InvalidDateTimeValue {
+            reason: format!("invalid base year {}", base_year),
+        }
+    })?;
+    base.checked_add_signed(Duration::days(days))
+        .ok_or_else(|| {
+            anyhow!(MigrationError::InvalidDateTimeValue {
+                reason: format!(
+                    "date overflow: {} days from base year {}",
+                    days, base_year
                 ),
-        );
-        datetime.format("'%Y-%m-%d %H:%M:%S'").to_string()
-    })
-    .unwrap_or_else(|| "NULL".to_string())
+            })
+        })
 }
 
-pub fn format_small_datetime(val: &Option<SmallDateTime>) -> String {
-    val.map(|dt| {
-        let datetime = NaiveDateTime::new(
-            from_days(dt.days() as i64, 1900),
-            from_minutes(dt.seconds_fragments() as u32 * 60),
-        );
-        datetime.format("'%Y-%m-%d %H:%M:%S'").to_string()
-    })
-    .unwrap_or_else(|| "NULL".to_string())
-}
-
-pub fn format_datetime_offset(val: &Option<DateTimeOffset>) -> String {
-    val.map(|dto| {
-        let date = from_days(dto.datetime2().date().days() as i64, 1);
-        let ns = dto.datetime2().time().increments() as i64
-            * 10i64.pow(9 - dto.datetime2().time().scale() as u32);
-
-        let time = NaiveTime::from_hms_opt(0, 0, 0).unwrap() + Duration::nanoseconds(ns)
-            - Duration::minutes(dto.offset() as i64);
-        let naive = NaiveDateTime::new(date, time);
-
-        let dto: ChronosDateTime<Utc> = ChronosDateTime::from_utc(naive, Utc);
-        dto.format("'%Y-%m-%d %H:%M:%S %z'").to_string()
-    })
-    .unwrap_or_else(|| "NULL".to_string())
-}
-
-pub fn from_days(days: i64, base_year: i32) -> NaiveDate {
-    NaiveDate::from_ymd_opt(base_year, 1, 1).expect("Invalid date components")
-        + Duration::days(days)
-}
-
-pub fn from_minutes(minutes: u32) -> NaiveTime {
+pub fn from_minutes(minutes: u32) -> Result<NaiveTime> {
     let hours = minutes / 60;
     let minutes_remainder = minutes % 60;
 
-    NaiveTime::from_hms_opt(0, hours, minutes_remainder).expect("Invalid time components")
+    NaiveTime::from_hms_opt(hours, minutes_remainder, 0).ok_or_else(|| {
+        anyhow!(MigrationError::InvalidDateTimeValue {
+            reason: format!(
+                "invalid time from {} minutes ({}h {}m)",
+                minutes, hours, minutes_remainder
+            ),
+        })
+    })
 }
 
-pub fn from_sec_fragments(seconds_fragments: i64) -> NaiveTime {
+pub fn from_sec_fragments(seconds_fragments: i64) -> Result<NaiveTime> {
     let milliseconds = seconds_fragments * 1000 / 300;
     let seconds = milliseconds / 1000;
     let milliseconds_remainder = milliseconds % 1000;
@@ -159,5 +207,145 @@ pub fn from_sec_fragments(seconds_fragments: i64) -> NaiveTime {
         seconds_remainder as u32,
         milliseconds_remainder as u32,
     )
-    .expect("Invalid time components")
+    .ok_or_else(|| {
+        anyhow!(MigrationError::InvalidDateTimeValue {
+            reason: format!(
+                "invalid time from seconds_fragments {}: {}h {}m {}s {}ms",
+                seconds_fragments, hours, minutes_remainder, seconds_remainder,
+                milliseconds_remainder
+            ),
+        })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_string_value_some() {
+        assert_eq!(format_string_value(Some("hello")), "'hello'");
+    }
+
+    #[test]
+    fn test_format_string_value_with_quotes() {
+        assert_eq!(format_string_value(Some("it's")), "'it''s'");
+    }
+
+    #[test]
+    fn test_format_string_value_none() {
+        assert_eq!(format_string_value::<String>(None), "NULL");
+    }
+
+    #[test]
+    fn test_format_number_value_some() {
+        assert_eq!(format_number_value(Some(42)), "42");
+    }
+
+    #[test]
+    fn test_format_number_value_none() {
+        assert_eq!(format_number_value::<i32>(None), "NULL");
+    }
+
+    #[test]
+    fn test_format_number_value_negative() {
+        assert_eq!(format_number_value(Some(-100)), "-100");
+    }
+
+    #[test]
+    fn test_format_number_value_float() {
+        assert_eq!(format_number_value(Some(3.14)), "3.14");
+    }
+
+    #[test]
+    fn test_from_days_valid() {
+        let date = from_days(0, 2023).unwrap();
+        assert_eq!(date, NaiveDate::from_ymd_opt(2023, 1, 1).unwrap());
+    }
+
+    #[test]
+    fn test_from_days_with_offset() {
+        let date = from_days(31, 2023).unwrap();
+        assert_eq!(date, NaiveDate::from_ymd_opt(2023, 2, 1).unwrap());
+    }
+
+    #[test]
+    fn test_from_days_base_year_1() {
+        let date = from_days(0, 1).unwrap();
+        assert_eq!(date, NaiveDate::from_ymd_opt(1, 1, 1).unwrap());
+    }
+
+    #[test]
+    fn test_from_days_base_year_1900() {
+        let date = from_days(0, 1900).unwrap();
+        assert_eq!(date, NaiveDate::from_ymd_opt(1900, 1, 1).unwrap());
+    }
+
+    #[test]
+    fn test_from_minutes_zero() {
+        let time = from_minutes(0).unwrap();
+        assert_eq!(time, NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn test_from_minutes_standard() {
+        let time = from_minutes(90).unwrap();
+        assert_eq!(time, NaiveTime::from_hms_opt(1, 30, 0).unwrap());
+    }
+
+    #[test]
+    fn test_from_sec_fragments_zero() {
+        let time = from_sec_fragments(0).unwrap();
+        assert_eq!(time, NaiveTime::from_hms_milli_opt(0, 0, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn test_from_sec_fragments_one_second() {
+        // 300 fragments = 1 second in MSSQL datetime encoding
+        let time = from_sec_fragments(300).unwrap();
+        assert_eq!(time, NaiveTime::from_hms_milli_opt(0, 0, 1, 0).unwrap());
+    }
+
+    #[test]
+    fn test_from_sec_fragments_one_hour() {
+        // 300 * 3600 = 1,080,000 fragments = 1 hour
+        let time = from_sec_fragments(300 * 3600).unwrap();
+        assert_eq!(time, NaiveTime::from_hms_milli_opt(1, 0, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn test_format_time_none() {
+        let result = format_time(&None).unwrap();
+        assert_eq!(result, "NULL");
+    }
+
+    #[test]
+    fn test_format_date_none() {
+        let result = format_date(&None).unwrap();
+        assert_eq!(result, "NULL");
+    }
+
+    #[test]
+    fn test_format_datetime_none() {
+        let result = format_datetime(&None).unwrap();
+        assert_eq!(result, "NULL");
+    }
+
+    #[test]
+    fn test_format_datetime2_none() {
+        let result = format_datetime2(&None).unwrap();
+        assert_eq!(result, "NULL");
+    }
+
+    #[test]
+    fn test_format_small_datetime_none() {
+        let result = format_small_datetime(&None).unwrap();
+        assert_eq!(result, "NULL");
+    }
+
+    #[test]
+    fn test_format_datetime_offset_none() {
+        let result = format_datetime_offset(&None).unwrap();
+        assert_eq!(result, "NULL");
+    }
 }
