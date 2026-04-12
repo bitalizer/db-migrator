@@ -15,6 +15,7 @@ use crate::connection::{DatabaseConnectionFactory, SqlxMySqlConnection, Tiberius
 use crate::extract::extractor::DatabaseExtractor;
 use crate::insert::inserter::DatabaseInserter;
 use crate::migrate::migration_options::MigrationOptions;
+use crate::mappings::UserOverrides;
 use crate::migrate::migrator::DatabaseMigrator;
 use crate::migrate::type_registry::TypeRegistry;
 
@@ -52,7 +53,8 @@ async fn run(options: Args) -> Result<()> {
     let extractor = DatabaseExtractor::new(tiberius_connection.pool);
     let inserter = DatabaseInserter::new(sqlx_connection.pool);
 
-    let registry = TypeRegistry::with_defaults();
+    let user_overrides = load_user_overrides().context("Failed to load mappings file")?;
+    let registry = TypeRegistry::with_defaults().with_user_overrides(&user_overrides);
 
     let migration_options = MigrationOptions {
         drop: options.drop,
@@ -116,6 +118,21 @@ fn initialize_logger(verbose: bool, quiet: bool) {
             )
         })
         .init();
+}
+
+fn load_user_overrides() -> Result<UserOverrides> {
+    let mappings_file = "mappings.toml";
+    match fs::read_to_string(mappings_file) {
+        Ok(content) => {
+            let value = content.parse::<Value>()?;
+            UserOverrides::from_toml(value)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            info!("No mappings.toml found, using built-in defaults");
+            Ok(UserOverrides::empty())
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 fn load_config() -> Result<Config> {
