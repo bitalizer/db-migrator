@@ -1,83 +1,210 @@
-# MSSQL to MySQL Database Migration
+<p align="center">
+  <h1 align="center">db-migrator</h1>
+  <p align="center">A fast, type-safe MSSQL to MySQL database migration tool written in Rust.</p>
+</p>
 
-![Rust Version](https://img.shields.io/badge/rust-1.61.0-orange.svg)
-![License](https://img.shields.io/github/license/bitalizer/db-migrator)
+<p align="center">
+  <img alt="Rust" src="https://img.shields.io/badge/rust-1.85+-orange.svg">
+  <a href="https://github.com/bitalizer/db-migrator/releases"><img alt="Release" src="https://img.shields.io/github/v/release/bitalizer/db-migrator"></a>
+  <a href="https://github.com/bitalizer/db-migrator/blob/master/LICENSE"><img alt="License" src="https://img.shields.io/github/license/bitalizer/db-migrator"></a>
+</p>
 
-A Rust project to migrate MSSQL databases to MySQL, including table structures, column data types, and table data rows.
+<p align="center">
+  <a href="#features">Features</a> &bull;
+  <a href="#quick-start">Quick Start</a> &bull;
+  <a href="#installation">Installation</a> &bull;
+  <a href="#configuration">Configuration</a> &bull;
+  <a href="#usage">Usage</a> &bull;
+  <a href="#type-mappings">Type Mappings</a>
+</p>
+
+---
+
+```
+$ db-migrator --format --constraints --verbose
+
+Migrating table: user_accounts
+Table user_accounts migrated, rows: 12840, took: 1.23s
+Migrating table: orders
+Table orders migrated, rows: 58201, took: 3.47s
+Migration finished, total time took: 4.82s
+```
 
 ## Features
 
-- Connects to MSSQL and MySQL databases to perform the migration.
-- Converts MSSQL table structures and column data types to their corresponding MySQL equivalents.
-- Transfers table data rows from MSSQL to MySQL.
-- Provides flexibility in configuring connection details, table mappings, and migration options.
-- Handles differences in data types, constraints, and other database-specific details during the migration process.
+- **Schema + data migration** — transfers table structures, column types, constraints, and all rows
+- **29 MSSQL types mapped** — built-in defaults for every type, zero config needed
+- **Concurrent** — tables migrate in parallel with configurable parallelism
+- **Batch inserts** — rows streamed and batched to respect MySQL `max_allowed_packet`
+- **Constraints** — primary keys and foreign keys carried over automatically
+- **Snake case** — optionally convert `PascalCase` names to `snake_case`
+- **Customizable** — override any type mapping with a simple config file
 
-## Dependencies
+## Quick Start
 
-- [tokio](https://docs.rs/tokio/1) - Asynchronous runtime for Rust.
-- [tokio-util](https://docs.rs/tokio-util/0.7) - Utilities for working with Tokio.
-- [anyhow](https://docs.rs/anyhow/1.0) - Rust error handling library.
-- [log](https://docs.rs/log/0.4) - Logging facade for Rust.
-- [env_logger](https://docs.rs/env_logger/0.10) - Environment logger for Rust.
-- [structopt](https://docs.rs/structopt/0.3) - Parse command line arguments in Rust.
-- [chrono](https://docs.rs/chrono/0.4) - Date and time library for Rust.
-- [toml](https://docs.rs/toml/0.7) - TOML parsing and serialization library for Rust.
-- [async-trait](https://docs.rs/async-trait/0.1) - Async versions of Rust's trait objects.
-- [hex](https://docs.rs/hex/0.4) - Hexadecimal encoding and decoding for Rust.
-- [futures](https://docs.rs/futures/0.3) - Asynchronous programming using Rust's futures.
-- [tiberius](https://docs.rs/tiberius/0.12) - MSSQL database driver for Rust.
-- [bb8](https://docs.rs/bb8/0.8) - Connection pool for Rust.
-- [bb8-tiberius](https://docs.rs/bb8-tiberius/0.15) - BB8 support for Tiberius.
-- [sqlx](https://docs.rs/sqlx/0.6) - Database toolkit for Rust, including support for MySQL.
-
-## Usage
-
-### Option 1: Compile and Run
-
-1. Copy the `config.example.toml` file to `config.toml`.
-2. Configure the connection details and whitelisted tables for the MSSQL and MySQL databases in the `config.toml` file.
-3. Customize the table mappings and migration options in the `mappings.toml` file.
-4. Build and run the migration tool using Cargo: 
 ```shell
+# 1. Configure your databases
+cp config.example.toml config.toml    # edit connection details
+
+# 2. Run
 cargo run --release
 ```
 
-### Option 2: Use Pre-compiled Binaries
-
-1. Go to the [GitHub Releases page](https://github.com/bitalizer/db-migrator/releases) of this repository.
-2. Download the appropriate pre-compiled binary for your operating system and architecture.
-3. Copy the `config.example.toml` file to `config.toml`.
-4. Configure the connection details and whitelisted tables for the MSSQL and MySQL databases in the `config.toml` file.
-
-### Arguments
-
-```shell
-USAGE:
-    db-migrator.exe [FLAGS] [OPTIONS]
-
-FLAGS:
-    -c, --constraints    Create constraints
-    -d, --drop           Drop tables before migration
-    -f, --format         Format snake case table and column names
-    -h, --help           Prints help information
-    -q, --quiet          Activate quiet mode
-    -V, --version        Prints version information
-    -v, --verbose        Activate verbose mode
-
-OPTIONS:
-    -p, --parallelism <parallelism>    Set parallelism [default: LOGICAL_CORES]
-
-
-```
+That's it. All type mappings are built in — no extra config needed unless you want to [customize them](#type-mappings).
 
 ## Installation
 
-Make sure you have Rust installed. You can install Rust from the official
-website: https://www.rust-lang.org/tools/install
+### Pre-compiled Binaries
 
-Clone the repository:
+Download the latest binary for your platform from [Releases](https://github.com/bitalizer/db-migrator/releases).
+
+### Build from Source
 
 ```shell
 git clone https://github.com/bitalizer/db-migrator.git
+cd db-migrator
+cargo build --release
 ```
+
+Requires Rust 1.85+ (edition 2024).
+
+## Configuration
+
+### Database Connections
+
+Create `config.toml` from the example:
+
+```toml
+[mssql_database]
+host = "localhost"
+port = 1433
+username = "db_user"
+password = "db_pass"
+database = "source_db"
+
+[mysql_database]
+host = "localhost"
+port = 3306
+username = "db_user"
+password = "db_pass"
+database = "target_db"
+
+[settings]
+max_packet_bytes = 1048576
+collation = "Latin1_General_CI_AS"
+whitelisted_tables = ["Users", "Orders", "Products"]
+```
+
+
+## Usage
+
+```
+db-migrator [FLAGS] [OPTIONS]
+```
+
+| Flag | Description |
+|---|---|
+| `-c, --constraints` | Create primary key and foreign key constraints |
+| `-d, --drop` | Drop target tables before migration |
+| `-f, --format` | Convert table and column names to snake_case |
+| `-v, --verbose` | Verbose logging |
+| `-q, --quiet` | Suppress output |
+
+| Option | Description |
+|---|---|
+| `-p, --parallelism <N>` | Max concurrent table migrations *(default: CPU cores)* |
+
+### Examples
+
+```shell
+# Basic migration
+db-migrator
+
+# Full migration with snake_case and constraints
+db-migrator --format --constraints
+
+# Verbose with custom parallelism
+db-migrator -v -p 4
+
+# Drop and recreate all tables
+db-migrator --drop --constraints --format
+```
+
+## Type Mappings
+
+All 29 MSSQL types are mapped by default. No configuration required.
+
+<details>
+<summary><strong>View full type mapping table</strong></summary>
+
+<br>
+
+| MSSQL | MySQL | Notes |
+|---|---|---|
+| `bit` | `tinyint(1)` | Boolean equivalent |
+| `tinyint` | `tinyint unsigned` | |
+| `smallint` | `smallint` | |
+| `int` | `int` | |
+| `bigint` | `bigint` | |
+| `decimal` / `numeric` | `decimal` | Precision and scale carried over |
+| `money` | `decimal(19, 4)` | |
+| `smallmoney` | `decimal(10, 2)` | |
+| `float` | `float` | |
+| `real` | `real` | |
+| `char` / `nchar` | `char` | Length carried from source |
+| `varchar` | `varchar` | Length carried, default 255 |
+| `nvarchar` | `longtext` | Unicode safe |
+| `text` / `ntext` | `longtext` | |
+| `binary` | `binary` | Length carried from source |
+| `varbinary` / `image` | `longblob` | |
+| `date` | `date` | |
+| `datetime` / `datetime2` / `smalldatetime` | `datetime` | |
+| `datetimeoffset` | `datetime` | Offset stripped |
+| `time` | `time` | |
+| `uniqueidentifier` | `char(36)` | UUID as string |
+| `timestamp` | `bigint` | Row version |
+| `xml` | `longtext` | |
+
+</details>
+
+### Custom Overrides *(optional)*
+
+To override any default mapping, create a `mappings.toml` file in the project root:
+
+```toml
+[mappings]
+nvarchar = "varchar(500)"
+money = "decimal(10, 2)"
+float = "float(53)"
+xml = "longtext"
+```
+
+Supports three formats: `"type"`, `"type(length)"`, and `"type(precision, scale)"`.
+
+## Requirements
+
+- **Source:** MSSQL Server
+- **Target:** MySQL 5.7+ / MariaDB 10.3+
+- **Build:** Rust 1.85+
+
+<details>
+<summary><strong>Dependencies</strong></summary>
+
+<br>
+
+| Crate | Purpose |
+|---|---|
+| [tokio](https://docs.rs/tokio/1) | Async runtime |
+| [tiberius](https://docs.rs/tiberius/0.12) | MSSQL driver |
+| [sqlx](https://docs.rs/sqlx/0.8) | MySQL driver |
+| [bb8](https://docs.rs/bb8/0.9) | Connection pooling |
+| [clap](https://docs.rs/clap/4) | CLI parsing |
+| [anyhow](https://docs.rs/anyhow/1.0) | Error handling |
+| [chrono](https://docs.rs/chrono/0.4) | Date/time |
+| [toml](https://docs.rs/toml/0.8) | Config parsing |
+
+</details>
+
+## License
+
+See [LICENSE](LICENSE) for details.

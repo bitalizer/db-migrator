@@ -14,9 +14,10 @@ use crate::config::Config;
 use crate::connection::{DatabaseConnectionFactory, SqlxMySqlConnection, TiberiusConnection};
 use crate::extract::extractor::DatabaseExtractor;
 use crate::insert::inserter::DatabaseInserter;
-use crate::mappings::Mappings;
+use crate::mappings::UserOverrides;
 use crate::migrate::migration_options::MigrationOptions;
 use crate::migrate::migrator::DatabaseMigrator;
+use crate::migrate::type_registry::TypeRegistry;
 
 mod args;
 mod common;
@@ -43,9 +44,6 @@ async fn main() {
 
 async fn run(options: Args) -> Result<()> {
     let config = load_config().context("Failed to load config file")?;
-    let mappings = load_mappings().context("Failed to load mappings file")?;
-
-    debug!("Total mappings loaded: {}", mappings.len());
     info!("Initializing connections...");
 
     let max_connections = options.parallelism as u32;
@@ -54,6 +52,9 @@ async fn run(options: Args) -> Result<()> {
 
     let extractor = DatabaseExtractor::new(tiberius_connection.pool);
     let inserter = DatabaseInserter::new(sqlx_connection.pool);
+
+    let user_overrides = load_user_overrides().context("Failed to load mappings file")?;
+    let registry = TypeRegistry::with_defaults().with_user_overrides(&user_overrides);
 
     let migration_options = MigrationOptions {
         drop: options.drop,
@@ -64,7 +65,7 @@ async fn run(options: Args) -> Result<()> {
         whitelisted_tables: config.settings().whitelisted_tables.clone(),
     };
 
-    let migrator = DatabaseMigrator::new(extractor, inserter, mappings, migration_options);
+    let migrator = DatabaseMigrator::new(extractor, inserter, registry, migration_options);
 
     migrator.run().await.with_context(|| "Migration failed")?;
 
@@ -119,18 +120,25 @@ fn initialize_logger(verbose: bool, quiet: bool) {
         .init();
 }
 
+fn load_user_overrides() -> Result<UserOverrides> {
+    let mappings_file = "mappings.toml";
+    match fs::read_to_string(mappings_file) {
+        Ok(content) => {
+            let value = content.parse::<Value>()?;
+            UserOverrides::from_toml(value)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            info!("No mappings.toml found, using built-in defaults");
+            Ok(UserOverrides::empty())
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
 fn load_config() -> Result<Config> {
     let config_file = "config.toml";
     let content = fs::read_to_string(config_file)?;
     let value = content.parse::<Value>()?;
     let config = Config::from_toml(value)?;
     Ok(config)
-}
-
-fn load_mappings() -> Result<Mappings> {
-    let mappings_file = "mappings.toml";
-    let content = fs::read_to_string(mappings_file)?;
-    let value = content.parse::<Value>()?;
-    let mappings = Mappings::from_toml(value)?;
-    Ok(mappings)
 }

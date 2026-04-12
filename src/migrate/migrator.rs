@@ -11,25 +11,30 @@ use crate::common::helpers::format_snake_case;
 use crate::extract::traits::Extractor;
 use crate::insert::table_action::TableAction;
 use crate::insert::traits::Inserter;
-use crate::mappings::Mappings;
 use crate::migrate::constraints_creator::ConstraintsCreator;
 use crate::migrate::migration_options::MigrationOptions;
 use crate::migrate::migration_result::MigrationResult;
 use crate::migrate::table_migrator::TableMigrator;
+use crate::migrate::type_registry::TypeRegistry;
 
 pub struct DatabaseMigrator<E: Extractor, I: Inserter> {
     extractor: E,
     inserter: I,
-    mappings: Mappings,
+    registry: Arc<TypeRegistry>,
     options: MigrationOptions,
 }
 
 impl<E: Extractor, I: Inserter> DatabaseMigrator<E, I> {
-    pub fn new(extractor: E, inserter: I, mappings: Mappings, options: MigrationOptions) -> Self {
+    pub fn new(
+        extractor: E,
+        inserter: I,
+        registry: TypeRegistry,
+        options: MigrationOptions,
+    ) -> Self {
         DatabaseMigrator {
             extractor,
             inserter,
-            mappings,
+            registry: Arc::new(registry),
             options,
         }
     }
@@ -117,7 +122,7 @@ impl<E: Extractor, I: Inserter> DatabaseMigrator<E, I> {
 
             let extractor = self.extractor.clone();
             let inserter = self.inserter.clone();
-            let mappings = self.mappings.clone();
+            let registry = Arc::clone(&self.registry);
             let options = self.options.clone();
             let table = table.clone();
             let table_name = table.clone();
@@ -136,7 +141,7 @@ impl<E: Extractor, I: Inserter> DatabaseMigrator<E, I> {
                     return Ok(None);
                 }
 
-                let table_migrator = TableMigrator::new(extractor, inserter, mappings, options);
+                let table_migrator = TableMigrator::new(extractor, inserter, registry, options);
 
                 let result = table_migrator
                     .migrate_table(&table)

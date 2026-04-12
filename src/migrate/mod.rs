@@ -4,3 +4,4 @@ pub mod migration_result;
 pub mod migrator;
 pub mod table_migrator;
 pub mod table_schema_mapper;
+pub(crate) mod type_registry;

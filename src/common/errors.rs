@@ -3,9 +3,6 @@ use std::fmt;
 /// Errors that can occur during the migration process.
 #[derive(Debug)]
 pub enum MigrationError {
-    /// A required type mapping was not found in mappings.toml
-    MappingNotFound { data_type: String },
-
     /// The target table already contains rows and cannot be migrated into
     TableAlreadyHasRows { table: String, count: i64 },
 
@@ -28,13 +25,6 @@ pub enum MigrationError {
 impl fmt::Display for MigrationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MigrationError::MappingNotFound { data_type } => {
-                write!(
-                    f,
-                    "No type mapping found for MSSQL data type '{}'. Add it to mappings.toml",
-                    data_type
-                )
-            }
             MigrationError::TableAlreadyHasRows { table, count } => {
                 write!(
                     f,

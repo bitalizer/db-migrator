@@ -3,11 +3,12 @@ use tiberius::Row;
 
 use crate::common::constraints::Constraint;
 use crate::common::errors::MigrationError;
+use crate::common::mssql_type::MssqlType;
 
 #[derive(Debug, Clone)]
 pub struct ColumnSchema {
     pub column_name: String,
-    pub data_type: String,
+    pub data_type: MssqlType,
     pub character_maximum_length: Option<i32>,
     pub numeric_precision: Option<u8>,
     pub numeric_scale: Option<i32>,
@@ -19,8 +20,14 @@ impl ColumnSchema {
     pub fn from_row(row: &Row) -> Result<Self> {
         let column_name: String =
             Column::get(row, "COLUMN_NAME").context("Failed to read COLUMN_NAME")?;
-        let data_type: String =
+        let data_type_str: String =
             Column::get(row, "DATA_TYPE").context("Failed to read DATA_TYPE")?;
+        let data_type = MssqlType::from_str(&data_type_str).ok_or_else(|| {
+            anyhow!(
+                "Unknown MSSQL data type '{}' for column '{}'. This type is not supported by the migrator.",
+                data_type_str, column_name
+            )
+        })?;
         let character_maximum_length: Option<i32> = Column::get(row, "CHARACTER_MAXIMUM_LENGTH")
             .context("Failed to read CHARACTER_MAXIMUM_LENGTH")?;
         let numeric_precision: Option<u8> =
