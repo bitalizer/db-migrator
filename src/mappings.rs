@@ -27,33 +27,23 @@ impl UserOverrides {
     pub(crate) fn from_toml(value: toml::Value) -> Result<UserOverrides> {
         let mappings_table = value
             .get("mappings")
-            .ok_or(anyhow!("Missing mappings table"))?
-            .as_array()
-            .ok_or(anyhow!("Invalid mappings table format"))?;
+            .ok_or(anyhow!("Missing [mappings] section"))?
+            .as_table()
+            .ok_or(anyhow!("Invalid [mappings] format — expected key-value pairs"))?;
 
         let mut overrides = HashMap::new();
 
-        for mapping_table in mappings_table {
-            let mapping_table = mapping_table
-                .as_table()
-                .ok_or(anyhow!("Invalid mapping format"))?;
-
-            let from_type_str = mapping_table
-                .get("from_type")
-                .and_then(|v| v.as_str())
-                .ok_or(anyhow!("Missing or invalid 'from_type' field"))?;
-
+        for (from_type_str, to_type_value) in mappings_table {
             let mssql_type = MssqlType::from_str(from_type_str).ok_or_else(|| {
                 anyhow!(
-                    "Unknown MSSQL type '{}' in from_type. Valid types: bit, tinyint, smallint, int, bigint, decimal, numeric, money, smallmoney, float, real, char, nchar, varchar, nvarchar, text, ntext, binary, varbinary, image, date, datetime, datetime2, smalldatetime, datetimeoffset, time, uniqueidentifier, timestamp, xml",
+                    "Unknown MSSQL type '{}'. Valid types: bit, tinyint, smallint, int, bigint, decimal, numeric, money, smallmoney, float, real, char, nchar, varchar, nvarchar, text, ntext, binary, varbinary, image, date, datetime, datetime2, smalldatetime, datetimeoffset, time, uniqueidentifier, timestamp, xml",
                     from_type_str
                 )
             })?;
 
-            let to_type_str = mapping_table
-                .get("to_type")
-                .and_then(|v| v.as_str())
-                .ok_or(anyhow!("Missing or invalid 'to_type' field"))?
+            let to_type_str = to_type_value
+                .as_str()
+                .ok_or(anyhow!("Invalid value for '{}' — expected a string like \"varchar(500)\"", from_type_str))?
                 .trim();
 
             let entry = parse_to_type(to_type_str, from_type_str)?;
@@ -126,6 +116,15 @@ fn parse_to_type(to_type_str: &str, from_type_str: &str) -> Result<TypeMappingEn
                 mysql_type.as_str(), to_type_str
             ));
         }
+    } else if mysql_type.accepts_length() {
+        // No params given but type requires length — carry from source with a safe default
+        entry.carry_length = true;
+        entry.default_length = Some(255);
+    } else if mysql_type.accepts_precision() {
+        // No params given but type requires precision — carry from source with a safe default
+        entry.carry_precision = true;
+        entry.default_precision = Some(10);
+        entry.default_scale = Some(2);
     }
 
     Ok(entry)
@@ -140,9 +139,8 @@ mod tests {
     #[test]
     fn test_parse_simple_override() {
         let toml: toml::Value = r#"
-        [[mappings]]
-        from_type = "nvarchar"
-        to_type = "varchar(500)"
+        [mappings]
+        nvarchar = "varchar(500)"
         "#.parse().unwrap();
 
         let overrides = UserOverrides::from_toml(toml).unwrap();
@@ -157,9 +155,8 @@ mod tests {
     #[test]
     fn test_parse_decimal_override() {
         let toml: toml::Value = r#"
-        [[mappings]]
-        from_type = "money"
-        to_type = "decimal(19, 4)"
+        [mappings]
+        money = "decimal(19, 4)"
         "#.parse().unwrap();
 
         let overrides = UserOverrides::from_toml(toml).unwrap();
@@ -173,9 +170,8 @@ mod tests {
     #[test]
     fn test_parse_no_params_override() {
         let toml: toml::Value = r#"
-        [[mappings]]
-        from_type = "nvarchar"
-        to_type = "longtext"
+        [mappings]
+        nvarchar = "longtext"
         "#.parse().unwrap();
 
         let overrides = UserOverrides::from_toml(toml).unwrap();
@@ -189,9 +185,8 @@ mod tests {
     #[test]
     fn test_parse_invalid_from_type() {
         let toml: toml::Value = r#"
-        [[mappings]]
-        from_type = "varchat"
-        to_type = "varchar(255)"
+        [mappings]
+        varchat = "varchar(255)"
         "#.parse().unwrap();
 
         let result = UserOverrides::from_toml(toml);
@@ -202,9 +197,8 @@ mod tests {
     #[test]
     fn test_parse_invalid_to_type() {
         let toml: toml::Value = r#"
-        [[mappings]]
-        from_type = "int"
-        to_type = "spatial_nonsense"
+        [mappings]
+        int = "spatial_nonsense"
         "#.parse().unwrap();
 
         let result = UserOverrides::from_toml(toml);
@@ -215,9 +209,8 @@ mod tests {
     #[test]
     fn test_parse_length_exceeds_max() {
         let toml: toml::Value = r#"
-        [[mappings]]
-        from_type = "varchar"
-        to_type = "varchar(70000)"
+        [mappings]
+        varchar = "varchar(70000)"
         "#.parse().unwrap();
 
         let result = UserOverrides::from_toml(toml);
@@ -228,9 +221,8 @@ mod tests {
     #[test]
     fn test_parse_length_on_non_length_type() {
         let toml: toml::Value = r#"
-        [[mappings]]
-        from_type = "text"
-        to_type = "longtext(500)"
+        [mappings]
+        text = "longtext(500)"
         "#.parse().unwrap();
 
         let result = UserOverrides::from_toml(toml);
@@ -241,7 +233,7 @@ mod tests {
     #[test]
     fn test_parse_empty_user_mappings() {
         let toml: toml::Value = r#"
-        mappings = []
+        [mappings]
         "#.parse().unwrap();
 
         let overrides = UserOverrides::from_toml(toml).unwrap();
@@ -249,11 +241,39 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_varchar_no_params_carries_length() {
+        let toml: toml::Value = r#"
+        [mappings]
+        nvarchar = "varchar"
+        "#.parse().unwrap();
+
+        let overrides = UserOverrides::from_toml(toml).unwrap();
+        let (_, entry) = overrides.iter().next().unwrap();
+        assert_eq!(entry.mysql_type, MySqlBaseType::Varchar);
+        assert!(entry.carry_length);
+        assert_eq!(entry.default_length, Some(255));
+    }
+
+    #[test]
+    fn test_parse_decimal_no_params_carries_precision() {
+        let toml: toml::Value = r#"
+        [mappings]
+        money = "decimal"
+        "#.parse().unwrap();
+
+        let overrides = UserOverrides::from_toml(toml).unwrap();
+        let (_, entry) = overrides.iter().next().unwrap();
+        assert_eq!(entry.mysql_type, MySqlBaseType::Decimal);
+        assert!(entry.carry_precision);
+        assert_eq!(entry.default_precision, Some(10));
+        assert_eq!(entry.default_scale, Some(2));
+    }
+
+    #[test]
     fn test_parse_precision_only() {
         let toml: toml::Value = r#"
-        [[mappings]]
-        from_type = "float"
-        to_type = "float(53)"
+        [mappings]
+        float = "float(53)"
         "#.parse().unwrap();
 
         let overrides = UserOverrides::from_toml(toml).unwrap();

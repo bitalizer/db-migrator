@@ -231,9 +231,8 @@ mod tests {
     #[test]
     fn test_with_user_overrides() {
         let toml_val: toml::Value = r#"
-        [[mappings]]
-        from_type = "nvarchar"
-        to_type = "varchar(500)"
+        [mappings]
+        nvarchar = "varchar(500)"
         "#.parse().unwrap();
 
         let overrides = crate::mappings::UserOverrides::from_toml(toml_val).unwrap();
