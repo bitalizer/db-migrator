@@ -182,7 +182,10 @@ mod tests {
         assert_eq!(format!("{}", MssqlType::Int), "int");
         assert_eq!(format!("{}", MssqlType::NVarchar), "nvarchar");
         assert_eq!(format!("{}", MssqlType::DateTime2), "datetime2");
-        assert_eq!(format!("{}", MssqlType::UniqueIdentifier), "uniqueidentifier");
+        assert_eq!(
+            format!("{}", MssqlType::UniqueIdentifier),
+            "uniqueidentifier"
+        );
         assert_eq!(format!("{}", MssqlType::VarBinary), "varbinary");
     }
 }

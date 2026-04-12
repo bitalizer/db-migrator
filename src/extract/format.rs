@@ -348,10 +348,10 @@ mod tests {
         assert_eq!(result, "NULL");
     }
 
-    // Task 11: Binary value formatting
     #[test]
     fn test_format_binary_value_unquoted() {
-        let result = format_column_value(ColumnData::Binary(Some(vec![0xFF, 0xAB].into()))).unwrap();
+        let result =
+            format_column_value(ColumnData::Binary(Some(vec![0xFF, 0xAB].into()))).unwrap();
         assert_eq!(result, "0xffab");
     }
 
@@ -361,7 +361,6 @@ mod tests {
         assert_eq!(result, "0x");
     }
 
-    // Task 12: Bit and U8 NULL handling
     #[test]
     fn test_format_bit_null() {
         assert_eq!(format_column_value(ColumnData::Bit(None)).unwrap(), "NULL");
@@ -369,12 +368,18 @@ mod tests {
 
     #[test]
     fn test_format_bit_true() {
-        assert_eq!(format_column_value(ColumnData::Bit(Some(true))).unwrap(), "1");
+        assert_eq!(
+            format_column_value(ColumnData::Bit(Some(true))).unwrap(),
+            "1"
+        );
     }
 
     #[test]
     fn test_format_bit_false() {
-        assert_eq!(format_column_value(ColumnData::Bit(Some(false))).unwrap(), "0");
+        assert_eq!(
+            format_column_value(ColumnData::Bit(Some(false))).unwrap(),
+            "0"
+        );
     }
 
     #[test]
@@ -387,17 +392,24 @@ mod tests {
         assert_eq!(format_column_value(ColumnData::U8(Some(42))).unwrap(), "42");
     }
 
-    // Task 13: Float quoting
     #[test]
     fn test_format_f32_unquoted() {
         let result = format_column_value(ColumnData::F32(Some(3.14))).unwrap();
-        assert!(!result.starts_with('\''), "F32 should not be quoted: {}", result);
+        assert!(
+            !result.starts_with('\''),
+            "F32 should not be quoted: {}",
+            result
+        );
     }
 
     #[test]
     fn test_format_f64_unquoted() {
         let result = format_column_value(ColumnData::F64(Some(2.718))).unwrap();
-        assert!(!result.starts_with('\''), "F64 should not be quoted: {}", result);
+        assert!(
+            !result.starts_with('\''),
+            "F64 should not be quoted: {}",
+            result
+        );
     }
 
     #[test]
@@ -410,7 +422,6 @@ mod tests {
         assert_eq!(format_column_value(ColumnData::F64(None)).unwrap(), "NULL");
     }
 
-    // Task 14: datetime2 sub-second precision
     #[test]
     fn test_format_datetime2_fractional_seconds() {
         let dt = NaiveDateTime::new(
@@ -421,7 +432,6 @@ mod tests {
         assert!(formatted.contains("14:30:45.123456"), "Got: {}", formatted);
     }
 
-    // Task 15: SmallDateTime minutes
     #[test]
     fn test_from_minutes_90_is_1h30m() {
         let time = from_minutes(90).unwrap();

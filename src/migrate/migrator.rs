@@ -25,7 +25,12 @@ pub struct DatabaseMigrator<E: Extractor, I: Inserter> {
 }
 
 impl<E: Extractor, I: Inserter> DatabaseMigrator<E, I> {
-    pub fn new(extractor: E, inserter: I, registry: TypeRegistry, options: MigrationOptions) -> Self {
+    pub fn new(
+        extractor: E,
+        inserter: I,
+        registry: TypeRegistry,
+        options: MigrationOptions,
+    ) -> Self {
         DatabaseMigrator {
             extractor,
             inserter,

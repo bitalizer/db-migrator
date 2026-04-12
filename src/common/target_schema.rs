@@ -13,8 +13,8 @@ pub struct TargetColumn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::mysql_type::{MySqlBaseType, MySqlType};
     use crate::common::constraints::Constraint;
+    use crate::common::mysql_type::{MySqlBaseType, MySqlType};
 
     #[test]
     fn test_target_column_creation() {

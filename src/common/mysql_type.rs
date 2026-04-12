@@ -71,7 +71,10 @@ impl MySqlBaseType {
     }
 
     pub fn accepts_length(&self) -> bool {
-        matches!(self, Self::Varchar | Self::Char | Self::Binary | Self::VarBinary)
+        matches!(
+            self,
+            Self::Varchar | Self::Char | Self::Binary | Self::VarBinary
+        )
     }
 
     pub fn accepts_precision(&self) -> bool {
@@ -81,8 +84,13 @@ impl MySqlBaseType {
     pub fn accepts_unsigned(&self) -> bool {
         matches!(
             self,
-            Self::TinyInt | Self::SmallInt | Self::Int | Self::BigInt
-                | Self::Decimal | Self::Float | Self::Real
+            Self::TinyInt
+                | Self::SmallInt
+                | Self::Int
+                | Self::BigInt
+                | Self::Decimal
+                | Self::Float
+                | Self::Real
         )
     }
 
@@ -169,8 +177,14 @@ mod tests {
     fn test_from_str_valid() {
         assert_eq!(MySqlBaseType::from_str("int"), Some(MySqlBaseType::Int));
         assert_eq!(MySqlBaseType::from_str("INT"), Some(MySqlBaseType::Int));
-        assert_eq!(MySqlBaseType::from_str("varchar"), Some(MySqlBaseType::Varchar));
-        assert_eq!(MySqlBaseType::from_str("longtext"), Some(MySqlBaseType::LongText));
+        assert_eq!(
+            MySqlBaseType::from_str("varchar"),
+            Some(MySqlBaseType::Varchar)
+        );
+        assert_eq!(
+            MySqlBaseType::from_str("longtext"),
+            Some(MySqlBaseType::LongText)
+        );
     }
 
     #[test]

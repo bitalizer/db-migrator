@@ -210,7 +210,11 @@ mod tests {
             referenced_column: "AccountId".to_string(),
         });
         let result = TableSchemaMapper::map_schema(&registry, &[col], true).unwrap();
-        if let Some(Constraint::ForeignKey { referenced_table, referenced_column }) = &result[0].constraints {
+        if let Some(Constraint::ForeignKey {
+            referenced_table,
+            referenced_column,
+        }) = &result[0].constraints
+        {
             assert_eq!(referenced_table, "user_accounts");
             assert_eq!(referenced_column, "account_id");
         } else {

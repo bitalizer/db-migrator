@@ -12,7 +12,9 @@ pub struct UserOverrides {
 
 impl UserOverrides {
     pub fn empty() -> Self {
-        UserOverrides { overrides: HashMap::new() }
+        UserOverrides {
+            overrides: HashMap::new(),
+        }
     }
 
     #[cfg(test)]
@@ -29,7 +31,9 @@ impl UserOverrides {
             .get("mappings")
             .ok_or(anyhow!("Missing [mappings] section"))?
             .as_table()
-            .ok_or(anyhow!("Invalid [mappings] format — expected key-value pairs"))?;
+            .ok_or(anyhow!(
+                "Invalid [mappings] format — expected key-value pairs"
+            ))?;
 
         let mut overrides = HashMap::new();
 
@@ -43,7 +47,10 @@ impl UserOverrides {
 
             let to_type_str = to_type_value
                 .as_str()
-                .ok_or(anyhow!("Invalid value for '{}' — expected a string like \"varchar(500)\"", from_type_str))?
+                .ok_or(anyhow!(
+                    "Invalid value for '{}' — expected a string like \"varchar(500)\"",
+                    from_type_str
+                ))?
                 .trim();
 
             let entry = parse_to_type(to_type_str, from_type_str)?;
@@ -85,14 +92,17 @@ fn parse_to_type(to_type_str: &str, from_type_str: &str) -> Result<TypeMappingEn
 
     if let Some(params) = params_str {
         if mysql_type.accepts_length() {
-            let length: u32 = params.trim().parse().map_err(|_| {
-                anyhow!("Invalid length '{}' in to_type '{}'", params, to_type_str)
-            })?;
+            let length: u32 = params
+                .trim()
+                .parse()
+                .map_err(|_| anyhow!("Invalid length '{}' in to_type '{}'", params, to_type_str))?;
             let max = mysql_type.max_length().unwrap();
             if length > max {
                 return Err(anyhow!(
                     "Length {} exceeds maximum {} for type '{}'. Use longtext/longblob for unlimited.",
-                    length, max, mysql_type.as_str()
+                    length,
+                    max,
+                    mysql_type.as_str()
                 ));
             }
             entry.carry_length = true;
@@ -100,7 +110,11 @@ fn parse_to_type(to_type_str: &str, from_type_str: &str) -> Result<TypeMappingEn
         } else if mysql_type.accepts_precision() {
             let parts: Vec<&str> = params.split(',').map(|s| s.trim()).collect();
             let precision: u8 = parts[0].parse().map_err(|_| {
-                anyhow!("Invalid precision '{}' in to_type '{}'", parts[0], to_type_str)
+                anyhow!(
+                    "Invalid precision '{}' in to_type '{}'",
+                    parts[0],
+                    to_type_str
+                )
             })?;
             entry.carry_precision = true;
             entry.default_precision = Some(precision);
@@ -113,7 +127,8 @@ fn parse_to_type(to_type_str: &str, from_type_str: &str) -> Result<TypeMappingEn
         } else {
             return Err(anyhow!(
                 "Type '{}' does not accept parameters, but got '{}'",
-                mysql_type.as_str(), to_type_str
+                mysql_type.as_str(),
+                to_type_str
             ));
         }
     } else if mysql_type.accepts_length() {
@@ -141,7 +156,9 @@ mod tests {
         let toml: toml::Value = r#"
         [mappings]
         nvarchar = "varchar(500)"
-        "#.parse().unwrap();
+        "#
+        .parse()
+        .unwrap();
 
         let overrides = UserOverrides::from_toml(toml).unwrap();
         assert_eq!(overrides.len(), 1);
@@ -157,7 +174,9 @@ mod tests {
         let toml: toml::Value = r#"
         [mappings]
         money = "decimal(19, 4)"
-        "#.parse().unwrap();
+        "#
+        .parse()
+        .unwrap();
 
         let overrides = UserOverrides::from_toml(toml).unwrap();
         let (_, entry) = overrides.iter().next().unwrap();
@@ -172,7 +191,9 @@ mod tests {
         let toml: toml::Value = r#"
         [mappings]
         nvarchar = "longtext"
-        "#.parse().unwrap();
+        "#
+        .parse()
+        .unwrap();
 
         let overrides = UserOverrides::from_toml(toml).unwrap();
         let (_, entry) = overrides.iter().next().unwrap();
@@ -187,7 +208,9 @@ mod tests {
         let toml: toml::Value = r#"
         [mappings]
         varchat = "varchar(255)"
-        "#.parse().unwrap();
+        "#
+        .parse()
+        .unwrap();
 
         let result = UserOverrides::from_toml(toml);
         assert!(result.is_err());
@@ -199,7 +222,9 @@ mod tests {
         let toml: toml::Value = r#"
         [mappings]
         int = "spatial_nonsense"
-        "#.parse().unwrap();
+        "#
+        .parse()
+        .unwrap();
 
         let result = UserOverrides::from_toml(toml);
         assert!(result.is_err());
@@ -211,7 +236,9 @@ mod tests {
         let toml: toml::Value = r#"
         [mappings]
         varchar = "varchar(70000)"
-        "#.parse().unwrap();
+        "#
+        .parse()
+        .unwrap();
 
         let result = UserOverrides::from_toml(toml);
         assert!(result.is_err());
@@ -223,7 +250,9 @@ mod tests {
         let toml: toml::Value = r#"
         [mappings]
         text = "longtext(500)"
-        "#.parse().unwrap();
+        "#
+        .parse()
+        .unwrap();
 
         let result = UserOverrides::from_toml(toml);
         assert!(result.is_err());
@@ -234,7 +263,9 @@ mod tests {
     fn test_parse_empty_user_mappings() {
         let toml: toml::Value = r#"
         [mappings]
-        "#.parse().unwrap();
+        "#
+        .parse()
+        .unwrap();
 
         let overrides = UserOverrides::from_toml(toml).unwrap();
         assert_eq!(overrides.len(), 0);
@@ -245,7 +276,9 @@ mod tests {
         let toml: toml::Value = r#"
         [mappings]
         nvarchar = "varchar"
-        "#.parse().unwrap();
+        "#
+        .parse()
+        .unwrap();
 
         let overrides = UserOverrides::from_toml(toml).unwrap();
         let (_, entry) = overrides.iter().next().unwrap();
@@ -259,7 +292,9 @@ mod tests {
         let toml: toml::Value = r#"
         [mappings]
         money = "decimal"
-        "#.parse().unwrap();
+        "#
+        .parse()
+        .unwrap();
 
         let overrides = UserOverrides::from_toml(toml).unwrap();
         let (_, entry) = overrides.iter().next().unwrap();
@@ -274,7 +309,9 @@ mod tests {
         let toml: toml::Value = r#"
         [mappings]
         float = "float(53)"
-        "#.parse().unwrap();
+        "#
+        .parse()
+        .unwrap();
 
         let overrides = UserOverrides::from_toml(toml).unwrap();
         let (_, entry) = overrides.iter().next().unwrap();

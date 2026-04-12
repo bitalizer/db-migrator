@@ -14,8 +14,8 @@ use crate::config::Config;
 use crate::connection::{DatabaseConnectionFactory, SqlxMySqlConnection, TiberiusConnection};
 use crate::extract::extractor::DatabaseExtractor;
 use crate::insert::inserter::DatabaseInserter;
-use crate::migrate::migration_options::MigrationOptions;
 use crate::mappings::UserOverrides;
+use crate::migrate::migration_options::MigrationOptions;
 use crate::migrate::migrator::DatabaseMigrator;
 use crate::migrate::type_registry::TypeRegistry;
 

@@ -26,7 +26,12 @@ pub struct TableMigrator<E: Extractor, I: Inserter> {
 }
 
 impl<E: Extractor, I: Inserter> TableMigrator<E, I> {
-    pub fn new(extractor: E, inserter: I, registry: Arc<TypeRegistry>, options: MigrationOptions) -> Self {
+    pub fn new(
+        extractor: E,
+        inserter: I,
+        registry: Arc<TypeRegistry>,
+        options: MigrationOptions,
+    ) -> Self {
         TableMigrator {
             extractor,
             inserter,

@@ -1,8 +1,8 @@
-use std::collections::HashMap;
 use crate::common::mssql_type::MssqlType;
 use crate::common::mysql_type::MySqlBaseType;
 use crate::common::type_mapping_entry::TypeMappingEntry;
 use crate::mappings::UserOverrides;
+use std::collections::HashMap;
 
 pub struct TypeRegistry {
     defaults: HashMap<MssqlType, TypeMappingEntry>,
@@ -21,10 +21,22 @@ impl TypeRegistry {
         defaults.insert(MssqlType::BigInt, Self::simple(MySqlBaseType::BigInt));
 
         // Exact numeric
-        defaults.insert(MssqlType::Decimal, Self::numeric(MySqlBaseType::Decimal, 10, 2));
-        defaults.insert(MssqlType::Numeric, Self::numeric(MySqlBaseType::Decimal, 18, 0));
-        defaults.insert(MssqlType::Money, Self::numeric(MySqlBaseType::Decimal, 19, 4));
-        defaults.insert(MssqlType::SmallMoney, Self::numeric(MySqlBaseType::Decimal, 10, 2));
+        defaults.insert(
+            MssqlType::Decimal,
+            Self::numeric(MySqlBaseType::Decimal, 10, 2),
+        );
+        defaults.insert(
+            MssqlType::Numeric,
+            Self::numeric(MySqlBaseType::Decimal, 18, 0),
+        );
+        defaults.insert(
+            MssqlType::Money,
+            Self::numeric(MySqlBaseType::Decimal, 19, 4),
+        );
+        defaults.insert(
+            MssqlType::SmallMoney,
+            Self::numeric(MySqlBaseType::Decimal, 10, 2),
+        );
 
         // Approximate numeric
         defaults.insert(MssqlType::Float, Self::simple(MySqlBaseType::Float));
@@ -33,27 +45,42 @@ impl TypeRegistry {
         // Character types
         defaults.insert(MssqlType::Char, Self::length(MySqlBaseType::Char, 1));
         defaults.insert(MssqlType::NChar, Self::length(MySqlBaseType::Char, 1));
-        defaults.insert(MssqlType::Varchar, Self::length(MySqlBaseType::Varchar, 255));
+        defaults.insert(
+            MssqlType::Varchar,
+            Self::length(MySqlBaseType::Varchar, 255),
+        );
         defaults.insert(MssqlType::NVarchar, Self::simple(MySqlBaseType::LongText));
         defaults.insert(MssqlType::Text, Self::simple(MySqlBaseType::Text));
         defaults.insert(MssqlType::NText, Self::simple(MySqlBaseType::LongText));
 
         // Binary types
         defaults.insert(MssqlType::Binary, Self::length(MySqlBaseType::Binary, 1));
-        defaults.insert(MssqlType::VarBinary, Self::length(MySqlBaseType::VarBinary, 255));
+        defaults.insert(
+            MssqlType::VarBinary,
+            Self::length(MySqlBaseType::VarBinary, 255),
+        );
         defaults.insert(MssqlType::Image, Self::simple(MySqlBaseType::LongBlob));
 
         // Date/time types
         defaults.insert(MssqlType::Date, Self::simple(MySqlBaseType::Date));
         defaults.insert(MssqlType::DateTime, Self::simple(MySqlBaseType::DateTime));
         defaults.insert(MssqlType::DateTime2, Self::simple(MySqlBaseType::DateTime));
-        defaults.insert(MssqlType::SmallDateTime, Self::simple(MySqlBaseType::DateTime));
-        defaults.insert(MssqlType::DateTimeOffset, Self::simple(MySqlBaseType::DateTime));
+        defaults.insert(
+            MssqlType::SmallDateTime,
+            Self::simple(MySqlBaseType::DateTime),
+        );
+        defaults.insert(
+            MssqlType::DateTimeOffset,
+            Self::simple(MySqlBaseType::DateTime),
+        );
         defaults.insert(MssqlType::Time, Self::simple(MySqlBaseType::Time));
         defaults.insert(MssqlType::Timestamp, Self::simple(MySqlBaseType::Timestamp));
 
         // Special types
-        defaults.insert(MssqlType::UniqueIdentifier, Self::length(MySqlBaseType::Char, 36));
+        defaults.insert(
+            MssqlType::UniqueIdentifier,
+            Self::length(MySqlBaseType::Char, 36),
+        );
         defaults.insert(MssqlType::Xml, Self::simple(MySqlBaseType::LongText));
 
         TypeRegistry {
@@ -130,20 +157,43 @@ mod tests {
     fn test_every_mssql_type_has_mapping() {
         let registry = TypeRegistry::with_defaults();
         let all_types = vec![
-            MssqlType::Bit, MssqlType::TinyInt, MssqlType::SmallInt,
-            MssqlType::Int, MssqlType::BigInt,
-            MssqlType::Decimal, MssqlType::Numeric, MssqlType::Money, MssqlType::SmallMoney,
-            MssqlType::Float, MssqlType::Real,
-            MssqlType::Char, MssqlType::NChar, MssqlType::Varchar,
-            MssqlType::NVarchar, MssqlType::Text, MssqlType::NText,
-            MssqlType::Binary, MssqlType::VarBinary, MssqlType::Image,
-            MssqlType::Date, MssqlType::DateTime, MssqlType::DateTime2,
-            MssqlType::SmallDateTime, MssqlType::DateTimeOffset, MssqlType::Time,
-            MssqlType::UniqueIdentifier, MssqlType::Timestamp, MssqlType::Xml,
+            MssqlType::Bit,
+            MssqlType::TinyInt,
+            MssqlType::SmallInt,
+            MssqlType::Int,
+            MssqlType::BigInt,
+            MssqlType::Decimal,
+            MssqlType::Numeric,
+            MssqlType::Money,
+            MssqlType::SmallMoney,
+            MssqlType::Float,
+            MssqlType::Real,
+            MssqlType::Char,
+            MssqlType::NChar,
+            MssqlType::Varchar,
+            MssqlType::NVarchar,
+            MssqlType::Text,
+            MssqlType::NText,
+            MssqlType::Binary,
+            MssqlType::VarBinary,
+            MssqlType::Image,
+            MssqlType::Date,
+            MssqlType::DateTime,
+            MssqlType::DateTime2,
+            MssqlType::SmallDateTime,
+            MssqlType::DateTimeOffset,
+            MssqlType::Time,
+            MssqlType::UniqueIdentifier,
+            MssqlType::Timestamp,
+            MssqlType::Xml,
         ];
         for t in all_types {
             let entry = registry.get(t);
-            assert!(!entry.mysql_type.as_str().is_empty(), "Empty mapping for {:?}", t);
+            assert!(
+                !entry.mysql_type.as_str().is_empty(),
+                "Empty mapping for {:?}",
+                t
+            );
         }
     }
 
@@ -233,7 +283,9 @@ mod tests {
         let toml_val: toml::Value = r#"
         [mappings]
         nvarchar = "varchar(500)"
-        "#.parse().unwrap();
+        "#
+        .parse()
+        .unwrap();
 
         let overrides = crate::mappings::UserOverrides::from_toml(toml_val).unwrap();
         let registry = TypeRegistry::with_defaults().with_user_overrides(&overrides);
