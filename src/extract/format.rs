@@ -116,8 +116,7 @@ pub fn format_datetime2(val: &Option<DateTime2>) -> Result<String> {
                     reason: "failed to create base time 00:00:00".to_string(),
                 }
             })?;
-            let ns =
-                dt.time().increments() as i64 * 10i64.pow(9 - dt.time().scale() as u32);
+            let ns = dt.time().increments() as i64 * 10i64.pow(9 - dt.time().scale() as u32);
             let time = base_time + Duration::nanoseconds(ns);
             let datetime = NaiveDateTime::new(date, time);
             Ok(datetime.format("'%Y-%m-%d %H:%M:%S'").to_string())
@@ -150,11 +149,11 @@ pub fn format_datetime_offset(val: &Option<DateTimeOffset>) -> Result<String> {
                     reason: "failed to create base time 00:00:00".to_string(),
                 }
             })?;
-            let time = base_time + Duration::nanoseconds(ns)
-                - Duration::minutes(dto.offset() as i64);
+            let time =
+                base_time + Duration::nanoseconds(ns) - Duration::minutes(dto.offset() as i64);
             let naive = NaiveDateTime::new(date, time);
 
-            let dto: ChronosDateTime<Utc> = ChronosDateTime::from_utc(naive, Utc);
+            let dto: ChronosDateTime<Utc> = naive.and_utc();
             Ok(dto.format("'%Y-%m-%d %H:%M:%S %z'").to_string())
         }
         None => Ok("NULL".to_string()),
@@ -170,10 +169,7 @@ pub fn from_days(days: i64, base_year: i32) -> Result<NaiveDate> {
     base.checked_add_signed(Duration::days(days))
         .ok_or_else(|| {
             anyhow!(MigrationError::InvalidDateTimeValue {
-                reason: format!(
-                    "date overflow: {} days from base year {}",
-                    days, base_year
-                ),
+                reason: format!("date overflow: {} days from base year {}", days, base_year),
             })
         })
 }
@@ -211,7 +207,10 @@ pub fn from_sec_fragments(seconds_fragments: i64) -> Result<NaiveTime> {
         anyhow!(MigrationError::InvalidDateTimeValue {
             reason: format!(
                 "invalid time from seconds_fragments {}: {}h {}m {}s {}ms",
-                seconds_fragments, hours, minutes_remainder, seconds_remainder,
+                seconds_fragments,
+                hours,
+                minutes_remainder,
+                seconds_remainder,
                 milliseconds_remainder
             ),
         })

@@ -6,7 +6,7 @@ use std::{fs, process, thread};
 
 use anyhow::{Context, Result};
 use chrono::Local;
-use structopt::StructOpt;
+use clap::Parser;
 use toml::Value;
 
 use crate::args::Args;
@@ -29,7 +29,7 @@ mod migrate;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
-    let options = Args::from_args();
+    let options = Args::parse();
 
     initialize_logger(options.verbose, options.quiet);
 
@@ -66,10 +66,7 @@ async fn run(options: Args) -> Result<()> {
 
     let mut migrator = DatabaseMigrator::new(extractor, inserter, mappings, migration_options);
 
-    migrator
-        .run()
-        .await
-        .with_context(|| "Migration failed")?;
+    migrator.run().await.with_context(|| "Migration failed")?;
 
     Ok(())
 }
