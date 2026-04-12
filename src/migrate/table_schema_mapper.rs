@@ -17,14 +17,11 @@ impl TableSchemaMapper {
         table_schema
             .iter()
             .map(|column| {
-                let mapping =
-                    mappings
-                        .get(&column.data_type)
-                        .ok_or_else(|| {
-                            anyhow!(MigrationError::MappingNotFound {
-                                data_type: column.data_type.clone(),
-                            })
-                        })?;
+                let mapping = mappings.get(&column.data_type).ok_or_else(|| {
+                    anyhow!(MigrationError::MappingNotFound {
+                        data_type: column.data_type.clone(),
+                    })
+                })?;
 
                 let new_column_name = if format {
                     format_snake_case(&column.column_name)

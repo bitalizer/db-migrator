@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Error, Result};
 use log::info;
 use tokio::spawn;
-use tokio::sync::{Semaphore, watch};
+use tokio::sync::{watch, Semaphore};
 use tokio::time::Instant;
 
 use crate::common::errors::MigrationError;
@@ -110,10 +110,7 @@ impl DatabaseMigrator {
         Ok((tables, formatted_tables))
     }
 
-    async fn run_migration(
-        &mut self,
-        tables: &[String],
-    ) -> Result<Vec<MigrationResult>> {
+    async fn run_migration(&mut self, tables: &[String]) -> Result<Vec<MigrationResult>> {
         let semaphore = Arc::new(Semaphore::new(self.options.max_concurrent_tasks));
 
         // Channel to signal cancellation when a task fails
@@ -151,8 +148,7 @@ impl DatabaseMigrator {
                     return Ok(None);
                 }
 
-                let mut table_migrator =
-                    TableMigrator::new(extractor, inserter, mappings, options);
+                let mut table_migrator = TableMigrator::new(extractor, inserter, mappings, options);
 
                 let result = table_migrator
                     .migrate_table(&table)

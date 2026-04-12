@@ -13,10 +13,7 @@ pub enum MigrationError {
     PacketSizeTooLarge { configured: usize, maximum: usize },
 
     /// Failed to parse a column value from the source database
-    ColumnParseFailed {
-        column: String,
-        reason: String,
-    },
+    ColumnParseFailed { column: String, reason: String },
 
     /// Failed to parse a constraint definition
     ConstraintParseFailed { value: String, reason: String },
@@ -59,11 +56,7 @@ impl fmt::Display for MigrationError {
                 write!(f, "Failed to parse column '{}': {}", column, reason)
             }
             MigrationError::ConstraintParseFailed { value, reason } => {
-                write!(
-                    f,
-                    "Failed to parse constraint from '{}': {}",
-                    value, reason
-                )
+                write!(f, "Failed to parse constraint from '{}': {}", value, reason)
             }
             MigrationError::InvalidDateTimeValue { reason } => {
                 write!(f, "Invalid date/time value: {}", reason)

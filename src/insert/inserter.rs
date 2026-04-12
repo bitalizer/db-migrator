@@ -59,9 +59,7 @@ impl DatabaseInserter {
                     table_name, query, err
                 );
                 // Best-effort re-enable FK checks before rollback
-                let _ = transaction
-                    .execute("SET FOREIGN_KEY_CHECKS=1")
-                    .await;
+                let _ = transaction.execute("SET FOREIGN_KEY_CHECKS=1").await;
                 transaction.rollback().await?;
             } else {
                 transaction.commit().await?;
@@ -139,10 +137,7 @@ impl DatabaseInserter {
     async fn get_all_tables(&mut self) -> Result<Vec<String>> {
         let rows = sqlx::query("SHOW TABLES").fetch_all(&self.pool).await?;
 
-        let table_names: Vec<String> = rows
-            .iter()
-            .map(|row| row.get::<String, _>(0))
-            .collect();
+        let table_names: Vec<String> = rows.iter().map(|row| row.get::<String, _>(0)).collect();
 
         Ok(table_names)
     }

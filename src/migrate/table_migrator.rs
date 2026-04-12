@@ -68,10 +68,7 @@ impl TableMigrator {
             .table_exists(&output_table_name)
             .await
             .with_context(|| {
-                format!(
-                    "Failed to check existence of table '{}'",
-                    output_table_name
-                )
+                format!("Failed to check existence of table '{}'", output_table_name)
             })?;
 
         if table_exists {
@@ -97,12 +94,7 @@ impl TableMigrator {
         let migrated_count = self
             .migrate_table_rows(table_name, &output_table_name, &mapped_schema)
             .await
-            .with_context(|| {
-                format!(
-                    "Failed to migrate rows for table '{}'",
-                    output_table_name
-                )
-            })?;
+            .with_context(|| format!("Failed to migrate rows for table '{}'", output_table_name))?;
 
         let end_time = Instant::now();
         info!(

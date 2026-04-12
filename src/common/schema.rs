@@ -17,22 +17,22 @@ pub struct ColumnSchema {
 
 impl ColumnSchema {
     pub fn from_row(row: &Row) -> Result<Self> {
-        let column_name: String = Column::get(row, "COLUMN_NAME")
-            .context("Failed to read COLUMN_NAME")?;
-        let data_type: String = Column::get(row, "DATA_TYPE")
-            .context("Failed to read DATA_TYPE")?;
+        let column_name: String =
+            Column::get(row, "COLUMN_NAME").context("Failed to read COLUMN_NAME")?;
+        let data_type: String =
+            Column::get(row, "DATA_TYPE").context("Failed to read DATA_TYPE")?;
         let character_maximum_length: Option<i32> = Column::get(row, "CHARACTER_MAXIMUM_LENGTH")
             .context("Failed to read CHARACTER_MAXIMUM_LENGTH")?;
-        let numeric_precision: Option<u8> = Column::get(row, "NUMERIC_PRECISION")
-            .context("Failed to read NUMERIC_PRECISION")?;
-        let numeric_scale: Option<i32> = Column::get(row, "NUMERIC_SCALE")
-            .context("Failed to read NUMERIC_SCALE")?;
-        let is_nullable_str: String = Column::get(row, "IS_NULLABLE")
-            .context("Failed to read IS_NULLABLE")?;
+        let numeric_precision: Option<u8> =
+            Column::get(row, "NUMERIC_PRECISION").context("Failed to read NUMERIC_PRECISION")?;
+        let numeric_scale: Option<i32> =
+            Column::get(row, "NUMERIC_SCALE").context("Failed to read NUMERIC_SCALE")?;
+        let is_nullable_str: String =
+            Column::get(row, "IS_NULLABLE").context("Failed to read IS_NULLABLE")?;
         let is_nullable = parse_bool_from_string(&is_nullable_str)
             .with_context(|| format!("Failed to parse IS_NULLABLE value '{}'", is_nullable_str))?;
-        let constraints_str: String = Column::get(row, "CONSTRAINTS")
-            .context("Failed to read CONSTRAINTS")?;
+        let constraints_str: String =
+            Column::get(row, "CONSTRAINTS").context("Failed to read CONSTRAINTS")?;
         let constraints = Constraint::from_str(&constraints_str)
             .map_err(|e| anyhow!(e))
             .with_context(|| format!("Failed to parse constraint for column '{}'", column_name))?;
