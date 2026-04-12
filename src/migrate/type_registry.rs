@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use crate::common::mssql_type::MssqlType;
 use crate::common::mysql_type::MySqlBaseType;
 use crate::common::type_mapping_entry::TypeMappingEntry;
+use crate::mappings::UserOverrides;
 
 pub struct TypeRegistry {
     defaults: HashMap<MssqlType, TypeMappingEntry>,
@@ -70,6 +71,13 @@ impl TypeRegistry {
 
     pub fn set_override(&mut self, mssql_type: MssqlType, entry: TypeMappingEntry) {
         self.overrides.insert(mssql_type, entry);
+    }
+
+    pub fn with_user_overrides(mut self, overrides: &UserOverrides) -> Self {
+        for (mssql_type, entry) in overrides.iter() {
+            self.set_override(*mssql_type, entry.clone());
+        }
+        self
     }
 
     fn simple(mysql_type: MySqlBaseType) -> TypeMappingEntry {
@@ -218,5 +226,23 @@ mod tests {
         // Other defaults unaffected
         let int_m = registry.get(MssqlType::Int);
         assert_eq!(int_m.mysql_type, MySqlBaseType::Int);
+    }
+
+    #[test]
+    fn test_with_user_overrides() {
+        let toml_val: toml::Value = r#"
+        [[mappings]]
+        from_type = "nvarchar"
+        to_type = "varchar(500)"
+        "#.parse().unwrap();
+
+        let overrides = crate::mappings::UserOverrides::from_toml(toml_val).unwrap();
+        let registry = TypeRegistry::with_defaults().with_user_overrides(&overrides);
+
+        let m = registry.get(MssqlType::NVarchar);
+        assert_eq!(m.mysql_type, MySqlBaseType::Varchar);
+        assert_eq!(m.default_length, Some(500));
+
+        assert_eq!(registry.get(MssqlType::Int).mysql_type, MySqlBaseType::Int);
     }
 }
