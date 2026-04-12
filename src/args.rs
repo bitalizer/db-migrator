@@ -1,3 +1,4 @@
+use std::num::NonZeroUsize;
 use std::thread::available_parallelism;
 
 use structopt::clap::AppSettings;
@@ -42,5 +43,7 @@ pub struct Args {
 }
 
 fn get_default_parallelism() -> usize {
-    available_parallelism().unwrap().get()
+    available_parallelism()
+        .unwrap_or(NonZeroUsize::new(4).expect("4 is non-zero"))
+        .get()
 }
