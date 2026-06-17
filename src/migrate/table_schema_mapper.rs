@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 
 use crate::common::constraints::Constraint;
 use crate::common::helpers::format_snake_case;
-use crate::common::mysql_type::MySqlType;
+use crate::common::mysql_type::{MySqlBaseType, MySqlType};
 use crate::common::schema::ColumnSchema;
 use crate::common::target_schema::TargetColumn;
 use crate::migrate::type_registry::TypeRegistry;
@@ -26,17 +26,29 @@ impl TableSchemaMapper {
                     column.column_name.clone()
                 };
 
+                let mut base_type = entry.mysql_type;
+
                 // Build length
                 let length = if entry.carry_length {
                     let source_length = column.character_maximum_length;
                     match source_length {
-                        Some(-1) => {
-                            return Err(anyhow!(
-                                "Column '{}' has MAX length (-1) but is mapped to '{}' which requires a fixed length. \
-                                 Use an override to map '{}' to longtext or longblob instead.",
-                                column.column_name, entry.mysql_type, column.data_type
-                            ));
-                        }
+                        Some(-1) => match entry.mysql_type {
+                            MySqlBaseType::Varchar => {
+                                base_type = MySqlBaseType::LongText;
+                                None
+                            }
+                            MySqlBaseType::VarBinary => {
+                                base_type = MySqlBaseType::LongBlob;
+                                None
+                            }
+                            _ => {
+                                return Err(anyhow!(
+                                    "Column '{}' has MAX length (-1) but is mapped to '{}' which requires a fixed length. \
+                                     Use an override to map '{}' to longtext or longblob instead.",
+                                    column.column_name, entry.mysql_type, column.data_type
+                                ));
+                            }
+                        },
                         Some(len) if len > 0 => {
                             let len = len as u32;
                             if let Some(max) = entry.mysql_type.max_length()
@@ -73,7 +85,7 @@ impl TableSchemaMapper {
                 };
 
                 let data_type = MySqlType {
-                    base_type: entry.mysql_type,
+                    base_type,
                     length,
                     precision,
                     scale,
@@ -108,7 +120,6 @@ mod tests {
     use super::*;
     use crate::common::constraints::Constraint;
     use crate::common::mssql_type::MssqlType;
-    use crate::common::mysql_type::MySqlBaseType;
     use crate::common::schema::ColumnSchema;
     use crate::migrate::type_registry::TypeRegistry;
 
@@ -167,6 +178,17 @@ mod tests {
     }
 
     #[test]
+    fn test_map_bounded_varchar_unaffected_by_max_handling() {
+        let registry = default_registry();
+        let mut col = make_source("name", MssqlType::Varchar);
+        col.character_maximum_length = Some(127);
+        let result = TableSchemaMapper::map_schema(&registry, &[col], false).unwrap();
+        assert_eq!(result[0].data_type.base_type, MySqlBaseType::Varchar);
+        assert_eq!(result[0].data_type.length, Some(127));
+        assert_eq!(result[0].data_type.to_sql(), "varchar(127)");
+    }
+
+    #[test]
     fn test_map_varchar_uses_default_length() {
         let registry = default_registry();
         let col = make_source("name", MssqlType::Varchar);
@@ -184,13 +206,56 @@ mod tests {
     }
 
     #[test]
-    fn test_map_varchar_max_errors() {
+    fn test_map_varchar_max_becomes_longtext() {
         let registry = default_registry();
         let mut col = make_source("data", MssqlType::Varchar);
         col.character_maximum_length = Some(-1); // MSSQL MAX
+        let result = TableSchemaMapper::map_schema(&registry, &[col], false).unwrap();
+        assert_eq!(result[0].data_type.base_type, MySqlBaseType::LongText);
+        assert_eq!(result[0].data_type.length, None);
+        assert_eq!(result[0].data_type.to_sql(), "longtext");
+    }
+
+    #[test]
+    fn test_map_varbinary_max_becomes_longblob() {
+        let registry = default_registry();
+        let mut col = make_source("data", MssqlType::VarBinary);
+        col.character_maximum_length = Some(-1); // MSSQL MAX
+        let result = TableSchemaMapper::map_schema(&registry, &[col], false).unwrap();
+        assert_eq!(result[0].data_type.base_type, MySqlBaseType::LongBlob);
+        assert_eq!(result[0].data_type.length, None);
+        assert_eq!(result[0].data_type.to_sql(), "longblob");
+    }
+
+    #[test]
+    fn test_map_mixed_bounded_and_max_columns() {
+        let registry = default_registry();
+        let mut bounded_a = make_source("code", MssqlType::Varchar);
+        bounded_a.character_maximum_length = Some(127);
+        let mut bounded_b = make_source("name", MssqlType::Varchar);
+        bounded_b.character_maximum_length = Some(127);
+        let mut max_col = make_source("notes", MssqlType::Varchar);
+        max_col.character_maximum_length = Some(-1);
+
+        let result =
+            TableSchemaMapper::map_schema(&registry, &[bounded_a, bounded_b, max_col], false)
+                .unwrap();
+
+        assert_eq!(result[0].data_type.to_sql(), "varchar(127)");
+        assert_eq!(result[1].data_type.to_sql(), "varchar(127)");
+        assert_eq!(result[2].data_type.to_sql(), "longtext");
+    }
+
+    #[test]
+    fn test_map_max_on_other_length_type_still_errors() {
+        let registry = default_registry();
+        let mut col = make_source("code", MssqlType::Char);
+        col.character_maximum_length = Some(-1); // MSSQL MAX
         let result = TableSchemaMapper::map_schema(&registry, &[col], false);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("MAX"));
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("MAX"));
+        assert!(msg.contains("override"));
     }
 
     #[test]
