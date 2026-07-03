@@ -410,11 +410,13 @@ dependencies = [
  "futures",
  "hex",
  "log",
+ "percent-encoding",
  "sqlx",
  "tiberius",
  "tokio",
  "tokio-util",
  "toml",
+ "url",
 ]
 
 [[package]]

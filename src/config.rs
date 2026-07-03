@@ -1,5 +1,8 @@
 use anyhow::{Result, anyhow};
 use toml::Value;
+use url::Url;
+
+pub const DEFAULT_MAX_PACKET_BYTES: usize = 1_048_576;
 
 #[derive(Debug)]
 pub(crate) struct Config {
@@ -77,6 +80,110 @@ impl Config {
     pub fn settings(&self) -> &SettingsConfig {
         &self.settings
     }
+
+    /// CLI override for the batch size; applies on top of config.toml.
+    pub(crate) fn override_max_packet_bytes(&mut self, max_packet_bytes: usize) -> Result<()> {
+        if max_packet_bytes == 0 {
+            return Err(anyhow!("--max-packet-bytes must be a positive integer"));
+        }
+        self.settings.max_packet_bytes = max_packet_bytes;
+        Ok(())
+    }
+
+    /// Build a Config purely from CLI arguments; config.toml is not involved.
+    pub(crate) fn from_cli(
+        source_url: &str,
+        target_url: &str,
+        tables_csv: &str,
+        max_packet_bytes: Option<usize>,
+    ) -> Result<Self> {
+        let mssql_database = parse_database_url("--source", source_url, "mssql", 1433)?;
+        let mysql_database = parse_database_url("--target", target_url, "mysql", 3306)?;
+
+        let whitelisted_tables: Vec<String> = tables_csv
+            .split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+        if whitelisted_tables.is_empty() {
+            return Err(anyhow!("--tables must list at least one table"));
+        }
+
+        Ok(Config {
+            mssql_database,
+            mysql_database,
+            settings: SettingsConfig {
+                max_packet_bytes: max_packet_bytes.unwrap_or(DEFAULT_MAX_PACKET_BYTES),
+                whitelisted_tables,
+            },
+        })
+    }
+}
+
+/// Parse a database URL like mssql://user:pass@host:1433/database.
+/// Error messages reference the CLI flag, never the URL itself, so
+/// credentials cannot leak into logs.
+fn parse_database_url(
+    label: &str,
+    url_str: &str,
+    expected_scheme: &str,
+    default_port: u16,
+) -> Result<DatabaseConfig> {
+    let url = Url::parse(url_str).map_err(|e| anyhow!("Invalid {} URL: {}", label, e))?;
+
+    if url.scheme() != expected_scheme {
+        return Err(anyhow!(
+            "Invalid {} URL: expected scheme '{}://', got '{}://'",
+            label,
+            expected_scheme,
+            url.scheme()
+        ));
+    }
+
+    let host = match url.host_str() {
+        Some(h) if !h.is_empty() => h.to_string(),
+        _ => {
+            return Err(anyhow!(
+                "Invalid {} URL: missing host, expected {}://user:pass@host:{}/database",
+                label,
+                expected_scheme,
+                default_port
+            ));
+        }
+    };
+    let port = url.port().unwrap_or(default_port);
+
+    let username = percent_decode(label, url.username())?;
+    if username.is_empty() {
+        return Err(anyhow!("Invalid {} URL: missing username", label));
+    }
+    let password = percent_decode(label, url.password().unwrap_or(""))?;
+
+    let database = url.path().trim_start_matches('/');
+    if database.is_empty() || database.contains('/') {
+        return Err(anyhow!(
+            "Invalid {} URL: missing database name, expected {}://user:pass@host:{}/database",
+            label,
+            expected_scheme,
+            default_port
+        ));
+    }
+    let database = percent_decode(label, database)?;
+
+    Ok(DatabaseConfig {
+        host,
+        port,
+        username,
+        password,
+        database,
+    })
+}
+
+fn percent_decode(label: &str, component: &str) -> Result<String> {
+    Ok(percent_encoding::percent_decode_str(component)
+        .decode_utf8()
+        .map_err(|_| anyhow!("Invalid {} URL: bad percent-encoding", label))?
+        .to_string())
 }
 
 fn reject_unknown_keys(section: &str, config: &Value, valid: &[&str]) -> Result<()> {
@@ -482,6 +589,138 @@ mod tests {
         let result = parse_settings_config(toml.get("settings").unwrap().clone());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("positive"));
+    }
+
+    #[test]
+    fn test_max_packet_bytes_cli_override() {
+        let mut config = Config::from_toml(valid_config_toml()).unwrap();
+        assert_eq!(config.settings().max_packet_bytes, 1048576);
+        config.override_max_packet_bytes(2048).unwrap();
+        assert_eq!(config.settings().max_packet_bytes, 2048);
+        assert!(config.override_max_packet_bytes(0).is_err());
+    }
+
+    #[test]
+    fn test_parse_url_full() {
+        let c = parse_database_url(
+            "--source",
+            "mssql://sa:p%40ss@10.0.0.1:1433/input",
+            "mssql",
+            1433,
+        )
+        .unwrap();
+        assert_eq!(c.host, "10.0.0.1");
+        assert_eq!(c.port, 1433);
+        assert_eq!(c.username, "sa");
+        assert_eq!(c.password, "p@ss"); // percent-decoded
+        assert_eq!(c.database, "input");
+    }
+
+    #[test]
+    fn test_parse_url_missing_host_errors() {
+        for bad in ["mssql:///input", "mssql://sa:pass@/input"] {
+            let result = parse_database_url("--source", bad, "mssql", 1433);
+            assert!(result.is_err(), "expected error for '{}'", bad);
+            assert!(
+                result.unwrap_err().to_string().contains("host"),
+                "error for '{}' should mention host",
+                bad
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_url_port_defaults_to_engine() {
+        let c = parse_database_url(
+            "--target",
+            "mysql://root:pass@localhost/output",
+            "mysql",
+            3306,
+        )
+        .unwrap();
+        assert_eq!(c.port, 3306);
+        let c = parse_database_url(
+            "--source",
+            "mssql://sa:pass@db.internal/input",
+            "mssql",
+            1433,
+        )
+        .unwrap();
+        assert_eq!(c.host, "db.internal");
+        assert_eq!(c.port, 1433);
+    }
+
+    #[test]
+    fn test_parse_url_wrong_scheme() {
+        let result = parse_database_url("--source", "mysql://sa:pass@host/db", "mssql", 1433);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("mssql"));
+    }
+
+    #[test]
+    fn test_parse_url_missing_database() {
+        let result = parse_database_url("--source", "mssql://sa:pass@host", "mssql", 1433);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("database"));
+    }
+
+    #[test]
+    fn test_parse_url_missing_username() {
+        let result = parse_database_url("--source", "mssql://host/db", "mssql", 1433);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("username"));
+    }
+
+    #[test]
+    fn test_parse_url_empty_password_allowed() {
+        let c = parse_database_url("--source", "mssql://sa@host/db", "mssql", 1433).unwrap();
+        assert_eq!(c.password, "");
+    }
+
+    #[test]
+    fn test_parse_url_errors_never_echo_credentials() {
+        // Failing URL contains a password; the error must not leak it
+        let result =
+            parse_database_url("--source", "mysql://sa:supersecret@host/db", "mssql", 1433);
+        let msg = result.unwrap_err().to_string();
+        assert!(!msg.contains("supersecret"));
+    }
+
+    #[test]
+    fn test_from_cli_builds_config() {
+        let config = Config::from_cli(
+            "mssql://sa:pass@10.0.0.1/input",
+            "mysql://root:pass@localhost/output",
+            "Users, Orders,Products",
+            None,
+        )
+        .unwrap();
+        assert_eq!(config.mssql_database().host, "10.0.0.1");
+        assert_eq!(config.mysql_database().port, 3306);
+        assert_eq!(
+            config.settings().whitelisted_tables,
+            vec!["Users", "Orders", "Products"]
+        );
+        assert_eq!(config.settings().max_packet_bytes, DEFAULT_MAX_PACKET_BYTES);
+    }
+
+    #[test]
+    fn test_from_cli_custom_packet_size() {
+        let config = Config::from_cli(
+            "mssql://sa:pass@h/i",
+            "mysql://root:pass@h/o",
+            "Users",
+            Some(2048),
+        )
+        .unwrap();
+        assert_eq!(config.settings().max_packet_bytes, 2048);
+    }
+
+    #[test]
+    fn test_from_cli_empty_tables_errors() {
+        let result = Config::from_cli("mssql://sa:pass@h/i", "mysql://root:pass@h/o", " , ,", None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("--tables"));
     }
 
     #[test]

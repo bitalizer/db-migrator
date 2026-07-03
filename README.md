@@ -117,7 +117,29 @@ db-migrator [FLAGS] [OPTIONS]
 
 | Option | Description |
 |---|---|
+| `--source <URL>` | Source database URL, `mssql://user:pass@host:1433/database` |
+| `--target <URL>` | Target database URL, `mysql://user:pass@host:3306/database` |
+| `--tables <T1,T2>` | Comma-separated tables to migrate *(CLI mode)* |
 | `-p, --parallelism <N>` | Max concurrent table migrations *(default: CPU cores)* |
+| `--max-packet-bytes <N>` | Max INSERT batch size in bytes *(default: 1048576; overrides config.toml)* |
+
+### CLI mode
+
+Passing any of `--source`/`--target`/`--tables` skips `config.toml` entirely, so a
+migration is a single copy-pasteable command. All three are required in this mode;
+the port defaults to the engine port (1433/3306) when omitted from a URL.
+
+```shell
+db-migrator \
+  --source "mssql://sa:pass@10.0.0.1:1433/input" \
+  --target "mysql://root:pass@localhost:3306/output" \
+  --tables Users,Orders,Products \
+  --format --constraints
+```
+
+> Credentials passed on the command line are visible in shell history and process
+> lists. Percent-encode special characters in passwords (`p@ss` becomes `p%40ss`).
+> `mappings.toml` type overrides apply in both modes.
 
 ### Examples
 
