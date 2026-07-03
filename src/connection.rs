@@ -25,6 +25,8 @@ pub trait DatabaseConnection: Sized {
 impl DatabaseConnection for TiberiusConnection {
     async fn new(config: &DatabaseConfig, max_connections: u32) -> Result<Self> {
         let mut tiberius_config = Config::new();
+        tiberius_config.host(&config.host);
+        tiberius_config.port(config.port);
         tiberius_config.encryption(EncryptionLevel::NotSupported);
         tiberius_config.authentication(AuthMethod::sql_server(&config.username, &config.password));
         tiberius_config.database(&config.database);
