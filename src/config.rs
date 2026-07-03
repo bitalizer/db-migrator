@@ -137,8 +137,16 @@ fn parse_settings_config(config: Value) -> Result<SettingsConfig> {
         .and_then(|value| value.as_array())
         .ok_or_else(|| anyhow!("Missing or invalid whitelisted tables"))?
         .iter()
-        .filter_map(|value| value.as_str().map(|s| s.to_string()))
-        .collect::<Vec<String>>();
+        .map(|value| {
+            value.as_str().map(|s| s.to_string()).ok_or_else(|| {
+                anyhow!(
+                    "Invalid whitelisted_tables entry '{}': table names must be strings, \
+                     quote numeric names like \"42\"",
+                    value
+                )
+            })
+        })
+        .collect::<Result<Vec<String>>>()?;
 
     Ok(SettingsConfig {
         max_packet_bytes,
@@ -428,6 +436,24 @@ mod tests {
         let result = parse_settings_config(toml.get("settings").unwrap().clone());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("positive"));
+    }
+
+    #[test]
+    fn test_non_string_whitelist_entry_errors() {
+        let toml: Value = r#"
+        [settings]
+        max_packet_bytes = 1048576
+        collation = "Latin1_General_CI_AS"
+        whitelisted_tables = ["users", 42]
+        "#
+        .parse()
+        .unwrap();
+
+        let result = parse_settings_config(toml.get("settings").unwrap().clone());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("42"));
+        assert!(msg.contains("string"));
     }
 
     #[test]
