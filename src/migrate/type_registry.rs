@@ -2,13 +2,17 @@ use crate::common::mssql_type::MssqlType;
 use crate::common::mysql_type::MySqlBaseType;
 use crate::common::type_mapping_entry::TypeMappingEntry;
 use crate::mappings::UserOverrides;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 
 pub struct TypeRegistry {
     defaults: HashMap<MssqlType, TypeMappingEntry>,
     overrides: HashMap<MssqlType, TypeMappingEntry>,
     /// Column-scoped overrides keyed by lowercased "table.column" source names.
     column_overrides: HashMap<String, TypeMappingEntry>,
+    /// Keys from column_overrides that resolve() has matched, so unused
+    /// (typo'd or stale) overrides can be reported after a run.
+    used_column_overrides: Mutex<HashSet<String>>,
 }
 
 impl TypeRegistry {
@@ -94,6 +98,7 @@ impl TypeRegistry {
             defaults,
             overrides: HashMap::new(),
             column_overrides: HashMap::new(),
+            used_column_overrides: Mutex::new(HashSet::new()),
         }
     }
 
@@ -114,9 +119,27 @@ impl TypeRegistry {
         mssql_type: MssqlType,
     ) -> &TypeMappingEntry {
         let key = format!("{}.{}", table_name, column_name).to_lowercase();
-        self.column_overrides
-            .get(&key)
-            .unwrap_or_else(|| self.get(mssql_type))
+        match self.column_overrides.get(&key) {
+            Some(entry) => {
+                self.used_column_overrides.lock().unwrap().insert(key);
+                entry
+            }
+            None => self.get(mssql_type),
+        }
+    }
+
+    /// Column override keys that never matched a resolved column. Call after
+    /// a migration run to surface typo'd or stale [mappings.columns] entries.
+    pub fn unused_column_overrides(&self) -> Vec<String> {
+        let used = self.used_column_overrides.lock().unwrap();
+        let mut unused: Vec<String> = self
+            .column_overrides
+            .keys()
+            .filter(|key| !used.contains(*key))
+            .cloned()
+            .collect();
+        unused.sort();
+        unused
     }
 
     pub fn set_override(&mut self, mssql_type: MssqlType, entry: TypeMappingEntry) {
@@ -385,6 +408,43 @@ mod tests {
         let m = registry.resolve("AnyTable", "AnyColumn", MssqlType::Int);
         assert_eq!(m.mysql_type, MySqlBaseType::Int);
         assert!(!m.unsigned);
+    }
+
+    #[test]
+    fn test_unused_column_overrides_reported() {
+        let toml_val: toml::Value = r#"
+        [mappings.columns]
+        "Orders.ID" = "int unsigned"
+        "Ordres.ID" = "int unsigned"
+        "#
+        .parse()
+        .unwrap();
+
+        let overrides = crate::mappings::UserOverrides::from_toml(toml_val).unwrap();
+        let registry = TypeRegistry::with_defaults().with_user_overrides(&overrides);
+
+        // Only the correctly spelled override resolves
+        registry.resolve("Orders", "ID", MssqlType::Int);
+        registry.resolve("Orders", "Name", MssqlType::Varchar);
+
+        let unused = registry.unused_column_overrides();
+        assert_eq!(unused, vec!["ordres.id".to_string()]);
+    }
+
+    #[test]
+    fn test_all_overrides_used_reports_nothing() {
+        let toml_val: toml::Value = r#"
+        [mappings.columns]
+        "Orders.ID" = "int unsigned"
+        "#
+        .parse()
+        .unwrap();
+
+        let overrides = crate::mappings::UserOverrides::from_toml(toml_val).unwrap();
+        let registry = TypeRegistry::with_defaults().with_user_overrides(&overrides);
+
+        registry.resolve("orders", "id", MssqlType::Int);
+        assert!(registry.unused_column_overrides().is_empty());
     }
 
     #[test]

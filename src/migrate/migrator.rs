@@ -77,6 +77,14 @@ impl<E: Extractor, I: Inserter> DatabaseMigrator<E, I> {
                 .await;
         }
 
+        let unused_overrides = self.registry.unused_column_overrides();
+        if !unused_overrides.is_empty() {
+            warn!(
+                "Column override(s) matched no migrated column (check for typos or                  non-whitelisted tables): {}",
+                unused_overrides.join(", ")
+            );
+        }
+
         let end_time = Instant::now();
 
         info!(
