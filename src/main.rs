@@ -4,7 +4,7 @@ extern crate log;
 use std::io::Write;
 use std::{fs, process, thread};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use chrono::Local;
 use clap::Parser;
 use toml::Value;
@@ -43,7 +43,7 @@ async fn main() {
 }
 
 async fn run(options: Args) -> Result<()> {
-    let config = load_config().context("Failed to load config file")?;
+    let config = resolve_config(&options)?;
     info!("Initializing connections...");
 
     let max_connections = options.parallelism as u32;
@@ -133,6 +133,46 @@ fn load_user_overrides() -> Result<UserOverrides> {
         }
         Err(e) => Err(e.into()),
     }
+}
+
+/// CLI mode (--source/--target/--tables) uses arguments exclusively;
+/// config.toml is not read. Without them, config.toml is required, so the
+/// two sources are never mixed.
+fn resolve_config(options: &Args) -> Result<Config> {
+    let cli_mode = options.source.is_some() || options.target.is_some() || options.tables.is_some();
+
+    if cli_mode {
+        let mut missing = Vec::new();
+        if options.source.is_none() {
+            missing.push("--source");
+        }
+        if options.target.is_none() {
+            missing.push("--target");
+        }
+        if options.tables.is_none() {
+            missing.push("--tables");
+        }
+        if !missing.is_empty() {
+            return Err(anyhow!(
+                "CLI mode requires --source, --target and --tables; missing: {}. config.toml is not read when CLI connection arguments are used.",
+                missing.join(", ")
+            ));
+        }
+
+        info!("Using CLI connection arguments, config.toml is not read");
+        return Config::from_cli(
+            options.source.as_deref().expect("checked above"),
+            options.target.as_deref().expect("checked above"),
+            options.tables.as_deref().expect("checked above"),
+            options.max_packet_bytes,
+        );
+    }
+
+    let mut config = load_config().context("Failed to load config file")?;
+    if let Some(max_packet_bytes) = options.max_packet_bytes {
+        config.override_max_packet_bytes(max_packet_bytes)?;
+    }
+    Ok(config)
 }
 
 fn load_config() -> Result<Config> {

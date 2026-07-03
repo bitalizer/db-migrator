@@ -37,6 +37,23 @@ pub struct Args {
     /// Set parallelism
     #[arg(short = 'p', long = "parallelism", default_value = DEFAULT_PARALLELISM.as_str())]
     pub parallelism: usize,
+
+    /// Source database URL: mssql://user:pass@host:1433/database.
+    /// When --source/--target/--tables are given, config.toml is not read.
+    #[arg(long = "source", value_name = "URL")]
+    pub source: Option<String>,
+
+    /// Target database URL: mysql://user:pass@host:3306/database
+    #[arg(long = "target", value_name = "URL")]
+    pub target: Option<String>,
+
+    /// Comma-separated list of tables to migrate (skips config.toml)
+    #[arg(long = "tables", value_name = "TABLE1,TABLE2")]
+    pub tables: Option<String>,
+
+    /// Maximum INSERT batch size in bytes (default 1048576; overrides config.toml)
+    #[arg(long = "max-packet-bytes", value_name = "BYTES")]
+    pub max_packet_bytes: Option<usize>,
 }
 
 fn get_default_parallelism() -> usize {
