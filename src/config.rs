@@ -27,7 +27,19 @@ pub struct SettingsConfig {
 
 impl Config {
     pub(crate) fn from_toml(config: Value) -> Result<Self> {
+        if let Some(table) = config.as_table() {
+            for key in table.keys() {
+                if !["mssql_database", "mysql_database", "settings"].contains(&key.as_str()) {
+                    return Err(anyhow!(
+                        "Unknown section '{}' in config.toml. Valid sections: mssql_database, mysql_database, settings",
+                        key
+                    ));
+                }
+            }
+        }
+
         let mssql_database = parse_database_config(
+            "mssql_database",
             config
                 .get("mssql_database")
                 .ok_or(anyhow!("Missing or invalid MSSQL database settings"))?
@@ -35,6 +47,7 @@ impl Config {
             1433,
         )?;
         let mysql_database = parse_database_config(
+            "mysql_database",
             config
                 .get("mysql_database")
                 .ok_or(anyhow!("Missing or invalid MySQL database settings"))?
@@ -68,7 +81,33 @@ impl Config {
     }
 }
 
-fn parse_database_config(config: Value, default_port: u16) -> Result<DatabaseConfig> {
+fn reject_unknown_keys(section: &str, config: &Value, valid: &[&str]) -> Result<()> {
+    if let Some(table) = config.as_table() {
+        for key in table.keys() {
+            if !valid.contains(&key.as_str()) {
+                return Err(anyhow!(
+                    "Unknown key '{}' in [{}]. Valid keys: {}",
+                    key,
+                    section,
+                    valid.join(", ")
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse_database_config(
+    section: &str,
+    config: Value,
+    default_port: u16,
+) -> Result<DatabaseConfig> {
+    reject_unknown_keys(
+        section,
+        &config,
+        &["host", "port", "username", "password", "database"],
+    )?;
+
     // host and port are optional: missing values fall back to defaults, but
     // present values of the wrong type are still rejected.
     let host = match config.get("host") {
@@ -115,6 +154,12 @@ fn parse_database_config(config: Value, default_port: u16) -> Result<DatabaseCon
 }
 
 fn parse_settings_config(config: Value) -> Result<SettingsConfig> {
+    reject_unknown_keys(
+        "settings",
+        &config,
+        &["max_packet_bytes", "collation", "whitelisted_tables"],
+    )?;
+
     let max_packet_bytes = config
         .get("max_packet_bytes")
         .and_then(|v| v.as_integer())
@@ -285,8 +330,12 @@ mod tests {
         .parse()
         .unwrap();
 
-        let config =
-            parse_database_config(toml.get("mssql_database").unwrap().clone(), 1433).unwrap();
+        let config = parse_database_config(
+            "mssql_database",
+            toml.get("mssql_database").unwrap().clone(),
+            1433,
+        )
+        .unwrap();
         assert_eq!(config.host, "localhost");
         assert_eq!(config.port, 1433);
     }
@@ -303,7 +352,7 @@ mod tests {
         .parse()
         .unwrap();
 
-        let config = parse_database_config(toml.get("db").unwrap().clone(), 1433).unwrap();
+        let config = parse_database_config("db", toml.get("db").unwrap().clone(), 1433).unwrap();
         assert_eq!(config.host, "10.0.0.5");
         assert_eq!(config.port, 1433);
     }
@@ -351,7 +400,7 @@ mod tests {
         .parse()
         .unwrap();
 
-        let result = parse_database_config(toml.get("db").unwrap().clone(), 1433);
+        let result = parse_database_config("db", toml.get("db").unwrap().clone(), 1433);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("host"));
     }
@@ -369,7 +418,7 @@ mod tests {
         .parse()
         .unwrap();
 
-        let result = parse_database_config(toml.get("db").unwrap().clone(), 1433);
+        let result = parse_database_config("db", toml.get("db").unwrap().clone(), 1433);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("port"));
     }
@@ -387,7 +436,7 @@ mod tests {
         .parse()
         .unwrap();
 
-        let result = parse_database_config(toml.get("db").unwrap().clone(), 1433);
+        let result = parse_database_config("db", toml.get("db").unwrap().clone(), 1433);
         assert!(result.is_err());
     }
 
@@ -436,6 +485,76 @@ mod tests {
         let result = parse_settings_config(toml.get("settings").unwrap().clone());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("positive"));
+    }
+
+    #[test]
+    fn test_unknown_key_in_database_section_errors() {
+        let toml: Value = r#"
+        [mssql_database]
+        host = "localhost"
+        prot = 1433
+        username = "sa"
+        password = "pass"
+        database = "db"
+        "#
+        .parse()
+        .unwrap();
+
+        let result = parse_database_config(
+            "mssql_database",
+            toml.get("mssql_database").unwrap().clone(),
+            1433,
+        );
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("prot"));
+        assert!(msg.contains("mssql_database"));
+    }
+
+    #[test]
+    fn test_unknown_key_in_settings_errors() {
+        let toml: Value = r#"
+        [settings]
+        max_packet_bytes = 1048576
+        collation = "Latin1_General_CI_AS"
+        whitelisted_tables = []
+        max_paket_bytes = 99
+        "#
+        .parse()
+        .unwrap();
+
+        let result = parse_settings_config(toml.get("settings").unwrap().clone());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("max_paket_bytes"));
+    }
+
+    #[test]
+    fn test_unknown_top_level_section_errors() {
+        let toml: Value = r#"
+        [mssql_database]
+        username = "sa"
+        password = "pass"
+        database = "db"
+
+        [mysql_database]
+        username = "root"
+        password = "pass"
+        database = "db"
+
+        [settings]
+        max_packet_bytes = 1048576
+        collation = "Latin1_General_CI_AS"
+        whitelisted_tables = []
+
+        [setings]
+        max_packet_bytes = 1
+        "#
+        .parse()
+        .unwrap();
+
+        let result = Config::from_toml(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("setings"));
     }
 
     #[test]
