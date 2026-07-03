@@ -8,12 +8,15 @@ use crate::common::type_mapping_entry::TypeMappingEntry;
 #[derive(Clone, Debug)]
 pub struct UserOverrides {
     overrides: HashMap<MssqlType, TypeMappingEntry>,
+    /// Column-scoped overrides keyed by lowercased "table.column" source names.
+    column_overrides: HashMap<String, TypeMappingEntry>,
 }
 
 impl UserOverrides {
     pub fn empty() -> Self {
         UserOverrides {
             overrides: HashMap::new(),
+            column_overrides: HashMap::new(),
         }
     }
 
@@ -26,6 +29,16 @@ impl UserOverrides {
         self.overrides.iter()
     }
 
+    pub fn columns_iter(&self) -> impl Iterator<Item = (&String, &TypeMappingEntry)> {
+        self.column_overrides.iter()
+    }
+
+    #[cfg(test)]
+    pub fn column_override(&self, table: &str, column: &str) -> Option<&TypeMappingEntry> {
+        let key = format!("{}.{}", table, column).to_lowercase();
+        self.column_overrides.get(&key)
+    }
+
     pub(crate) fn from_toml(value: toml::Value) -> Result<UserOverrides> {
         let mappings_table = value
             .get("mappings")
@@ -36,8 +49,36 @@ impl UserOverrides {
             ))?;
 
         let mut overrides = HashMap::new();
+        let mut column_overrides = HashMap::new();
 
         for (from_type_str, to_type_value) in mappings_table {
+            // [mappings.columns] holds column-scoped overrides, not a type
+            if from_type_str == "columns" {
+                let columns_table = to_type_value.as_table().ok_or(anyhow!(
+                    "Invalid [mappings.columns] format — expected key-value pairs"
+                ))?;
+                for (column_key, value) in columns_table {
+                    if !column_key.contains('.') {
+                        return Err(anyhow!(
+                            "Invalid column override key '{}' — expected \"Table.Column\" format",
+                            column_key
+                        ));
+                    }
+                    let to_type_str = value
+                        .as_str()
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "Invalid value for column override '{}' — expected a string like \"int unsigned\"",
+                                column_key
+                            )
+                        })?
+                        .trim();
+                    let entry = parse_to_type(to_type_str, column_key)?;
+                    column_overrides.insert(column_key.to_lowercase(), entry);
+                }
+                continue;
+            }
+
             let mssql_type = MssqlType::from_str(from_type_str).ok_or_else(|| {
                 anyhow!(
                     "Unknown MSSQL type '{}'. Valid types: bit, tinyint, smallint, int, bigint, decimal, numeric, money, smallmoney, float, real, char, nchar, varchar, nvarchar, text, ntext, binary, varbinary, image, date, datetime, datetime2, smalldatetime, datetimeoffset, time, uniqueidentifier, timestamp, xml",
@@ -57,19 +98,33 @@ impl UserOverrides {
             overrides.insert(mssql_type, entry);
         }
 
-        Ok(UserOverrides { overrides })
+        Ok(UserOverrides {
+            overrides,
+            column_overrides,
+        })
     }
 }
 
 fn parse_to_type(to_type_str: &str, from_type_str: &str) -> Result<TypeMappingEntry> {
-    let (base_str, params_str) = if let Some(paren_start) = to_type_str.find('(') {
-        let base = &to_type_str[..paren_start];
-        let params = to_type_str[paren_start..]
+    // Split "base(params) modifiers..." into the type part and trailing
+    // modifiers. Params may contain spaces (e.g. "decimal(19, 4)"), so split
+    // after the closing paren when present, otherwise at the first whitespace.
+    let (type_part, modifiers_part) = match to_type_str.find(')') {
+        Some(pos) => to_type_str.split_at(pos + 1),
+        None => match to_type_str.find(char::is_whitespace) {
+            Some(pos) => to_type_str.split_at(pos),
+            None => (to_type_str, ""),
+        },
+    };
+
+    let (base_str, params_str) = if let Some(paren_start) = type_part.find('(') {
+        let base = &type_part[..paren_start];
+        let params = type_part[paren_start..]
             .trim_start_matches('(')
             .trim_end_matches(')');
         (base, Some(params))
     } else {
-        (to_type_str, None)
+        (type_part, None)
     };
 
     let mysql_type = MySqlBaseType::from_str(base_str).ok_or_else(|| {
@@ -140,6 +195,29 @@ fn parse_to_type(to_type_str: &str, from_type_str: &str) -> Result<TypeMappingEn
         entry.carry_precision = true;
         entry.default_precision = Some(10);
         entry.default_scale = Some(2);
+    }
+
+    for modifier in modifiers_part.split_whitespace() {
+        match modifier.to_lowercase().as_str() {
+            "unsigned" => entry.unsigned = true,
+            "zerofill" => entry.zerofill = true,
+            other => {
+                return Err(anyhow!(
+                    "Unknown modifier '{}' in to_type '{}'. Supported modifiers: unsigned, zerofill",
+                    other,
+                    to_type_str
+                ));
+            }
+        }
+    }
+
+    if (entry.unsigned || entry.zerofill) && !mysql_type.accepts_unsigned() {
+        return Err(anyhow!(
+            "Type '{}' does not support unsigned/zerofill in to_type '{}' for mapping from '{}'",
+            mysql_type.as_str(),
+            to_type_str,
+            from_type_str
+        ));
     }
 
     Ok(entry)
@@ -317,5 +395,174 @@ mod tests {
         let (_, entry) = overrides.iter().next().unwrap();
         assert_eq!(entry.default_precision, Some(53));
         assert_eq!(entry.default_scale, None);
+    }
+
+    #[test]
+    fn test_parse_unsigned_int_override() {
+        let toml: toml::Value = r#"
+        [mappings]
+        int = "int unsigned"
+        "#
+        .parse()
+        .unwrap();
+
+        let overrides = UserOverrides::from_toml(toml).unwrap();
+        let (mssql_type, entry) = overrides.iter().next().unwrap();
+        assert_eq!(*mssql_type, MssqlType::Int);
+        assert_eq!(entry.mysql_type, MySqlBaseType::Int);
+        assert!(entry.unsigned);
+        assert!(!entry.zerofill);
+    }
+
+    #[test]
+    fn test_parse_unsigned_decimal_with_params() {
+        // Space inside parens plus a trailing modifier.
+        let toml: toml::Value = r#"
+        [mappings]
+        money = "decimal(19, 4) unsigned"
+        "#
+        .parse()
+        .unwrap();
+
+        let overrides = UserOverrides::from_toml(toml).unwrap();
+        let (_, entry) = overrides.iter().next().unwrap();
+        assert_eq!(entry.mysql_type, MySqlBaseType::Decimal);
+        assert_eq!(entry.default_precision, Some(19));
+        assert_eq!(entry.default_scale, Some(4));
+        assert!(entry.unsigned);
+    }
+
+    #[test]
+    fn test_parse_unsigned_zerofill() {
+        let toml: toml::Value = r#"
+        [mappings]
+        int = "int unsigned zerofill"
+        "#
+        .parse()
+        .unwrap();
+
+        let overrides = UserOverrides::from_toml(toml).unwrap();
+        let (_, entry) = overrides.iter().next().unwrap();
+        assert!(entry.unsigned);
+        assert!(entry.zerofill);
+    }
+
+    #[test]
+    fn test_parse_unsigned_case_insensitive() {
+        let toml: toml::Value = r#"
+        [mappings]
+        int = "INT UNSIGNED"
+        "#
+        .parse()
+        .unwrap();
+
+        let overrides = UserOverrides::from_toml(toml).unwrap();
+        let (_, entry) = overrides.iter().next().unwrap();
+        assert_eq!(entry.mysql_type, MySqlBaseType::Int);
+        assert!(entry.unsigned);
+    }
+
+    #[test]
+    fn test_parse_unsigned_rejected_for_non_numeric() {
+        let toml: toml::Value = r#"
+        [mappings]
+        varchar = "varchar(100) unsigned"
+        "#
+        .parse()
+        .unwrap();
+
+        let result = UserOverrides::from_toml(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unsigned"));
+    }
+
+    #[test]
+    fn test_parse_unknown_modifier_rejected() {
+        let toml: toml::Value = r#"
+        [mappings]
+        int = "int banana"
+        "#
+        .parse()
+        .unwrap();
+
+        let result = UserOverrides::from_toml(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("banana"));
+    }
+
+    #[test]
+    fn test_parse_column_override() {
+        let toml: toml::Value = r#"
+        [mappings]
+        datetime = "datetime"
+
+        [mappings.columns]
+        "Orders.ID" = "int unsigned"
+        "#
+        .parse()
+        .unwrap();
+
+        let overrides = UserOverrides::from_toml(toml).unwrap();
+        let entry = overrides.column_override("Orders", "ID").unwrap();
+        assert_eq!(entry.mysql_type, MySqlBaseType::Int);
+        assert!(entry.unsigned);
+        // Type-wide mappings are parsed independently of column overrides
+        assert_eq!(overrides.len(), 1);
+    }
+
+    #[test]
+    fn test_column_override_lookup_case_insensitive() {
+        let toml: toml::Value = r#"
+        [mappings.columns]
+        "Orders.ID" = "int unsigned"
+        "#
+        .parse()
+        .unwrap();
+
+        let overrides = UserOverrides::from_toml(toml).unwrap();
+        assert!(overrides.column_override("orders", "id").is_some());
+        assert!(overrides.column_override("ORDERS", "ID").is_some());
+        assert!(overrides.column_override("Orders", "Name").is_none());
+    }
+
+    #[test]
+    fn test_parse_column_override_without_dot_rejected() {
+        let toml: toml::Value = r#"
+        [mappings.columns]
+        OrdersID = "int unsigned"
+        "#
+        .parse()
+        .unwrap();
+
+        let result = UserOverrides::from_toml(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Table.Column"));
+    }
+
+    #[test]
+    fn test_parse_column_override_invalid_value_rejected() {
+        let toml: toml::Value = r#"
+        [mappings.columns]
+        "Orders.ID" = 42
+        "#
+        .parse()
+        .unwrap();
+
+        let result = UserOverrides::from_toml(toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_column_override_invalid_type_rejected() {
+        let toml: toml::Value = r#"
+        [mappings.columns]
+        "Orders.ID" = "spatial_nonsense"
+        "#
+        .parse()
+        .unwrap();
+
+        let result = UserOverrides::from_toml(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("spatial_nonsense"));
     }
 }

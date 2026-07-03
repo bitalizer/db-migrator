@@ -179,7 +179,25 @@ float = "float(53)"
 xml = "longtext"
 ```
 
-Supports three formats: `"type"`, `"type(length)"`, and `"type(precision, scale)"`.
+Supports three formats: `"type"`, `"type(length)"`, and `"type(precision, scale)"`,
+each optionally followed by the modifiers `unsigned` and/or `zerofill`
+(numeric types only), e.g. `"int unsigned"` or `"decimal(19, 4) unsigned"`.
+
+#### Column-scoped overrides
+
+Type-wide overrides apply to every column of that source type. When only
+specific columns need different output (e.g. a legacy schema expecting
+`int unsigned` IDs), scope the override to `"Table.Column"` source names:
+
+```toml
+[mappings.columns]
+"Orders.ID" = "int unsigned"
+"Orders.Notes" = "text"
+```
+
+Column overrides take precedence over type-wide overrides, which take
+precedence over the built-in defaults. Names are matched case-insensitively
+against the source (SQL Server) table and column names.
 
 ## Requirements
 

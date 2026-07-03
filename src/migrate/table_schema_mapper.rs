@@ -12,13 +12,15 @@ pub struct TableSchemaMapper;
 impl TableSchemaMapper {
     pub fn map_schema(
         registry: &TypeRegistry,
+        table_name: &str,
         source_schema: &[ColumnSchema],
         format: bool,
     ) -> Result<Vec<TargetColumn>> {
         source_schema
             .iter()
             .map(|column| {
-                let entry = registry.get(column.data_type);
+                // Resolve against source names (pre snake_case formatting)
+                let entry = registry.resolve(table_name, &column.column_name, column.data_type);
 
                 let column_name = if format {
                     format_snake_case(&column.column_name)
@@ -143,7 +145,7 @@ mod tests {
     fn test_map_int() {
         let registry = default_registry();
         let source = vec![make_source("id", MssqlType::Int)];
-        let result = TableSchemaMapper::map_schema(&registry, &source, false).unwrap();
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &source, false).unwrap();
         assert_eq!(result[0].data_type.base_type, MySqlBaseType::Int);
         assert!(!result[0].data_type.unsigned);
     }
@@ -154,7 +156,7 @@ mod tests {
         let mut col = make_source("price", MssqlType::Decimal);
         col.numeric_precision = Some(10);
         col.numeric_scale = Some(2);
-        let result = TableSchemaMapper::map_schema(&registry, &[col], false).unwrap();
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], false).unwrap();
         assert_eq!(result[0].data_type.precision, Some(10));
         assert_eq!(result[0].data_type.scale, Some(2));
     }
@@ -163,7 +165,7 @@ mod tests {
     fn test_map_money_uses_defaults() {
         let registry = default_registry();
         let col = make_source("amount", MssqlType::Money);
-        let result = TableSchemaMapper::map_schema(&registry, &[col], false).unwrap();
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], false).unwrap();
         assert_eq!(result[0].data_type.precision, Some(19));
         assert_eq!(result[0].data_type.scale, Some(4));
     }
@@ -173,7 +175,7 @@ mod tests {
         let registry = default_registry();
         let mut col = make_source("name", MssqlType::Varchar);
         col.character_maximum_length = Some(100);
-        let result = TableSchemaMapper::map_schema(&registry, &[col], false).unwrap();
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], false).unwrap();
         assert_eq!(result[0].data_type.length, Some(100));
     }
 
@@ -182,7 +184,7 @@ mod tests {
         let registry = default_registry();
         let mut col = make_source("name", MssqlType::Varchar);
         col.character_maximum_length = Some(127);
-        let result = TableSchemaMapper::map_schema(&registry, &[col], false).unwrap();
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], false).unwrap();
         assert_eq!(result[0].data_type.base_type, MySqlBaseType::Varchar);
         assert_eq!(result[0].data_type.length, Some(127));
         assert_eq!(result[0].data_type.to_sql(), "varchar(127)");
@@ -192,7 +194,7 @@ mod tests {
     fn test_map_varchar_uses_default_length() {
         let registry = default_registry();
         let col = make_source("name", MssqlType::Varchar);
-        let result = TableSchemaMapper::map_schema(&registry, &[col], false).unwrap();
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], false).unwrap();
         assert_eq!(result[0].data_type.length, Some(255));
     }
 
@@ -200,7 +202,7 @@ mod tests {
     fn test_map_nvarchar_becomes_longtext() {
         let registry = default_registry();
         let col = make_source("desc", MssqlType::NVarchar);
-        let result = TableSchemaMapper::map_schema(&registry, &[col], false).unwrap();
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], false).unwrap();
         assert_eq!(result[0].data_type.base_type, MySqlBaseType::LongText);
         assert_eq!(result[0].data_type.length, None);
     }
@@ -210,7 +212,7 @@ mod tests {
         let registry = default_registry();
         let mut col = make_source("data", MssqlType::Varchar);
         col.character_maximum_length = Some(-1); // MSSQL MAX
-        let result = TableSchemaMapper::map_schema(&registry, &[col], false).unwrap();
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], false).unwrap();
         assert_eq!(result[0].data_type.base_type, MySqlBaseType::LongText);
         assert_eq!(result[0].data_type.length, None);
         assert_eq!(result[0].data_type.to_sql(), "longtext");
@@ -221,7 +223,7 @@ mod tests {
         let registry = default_registry();
         let mut col = make_source("data", MssqlType::VarBinary);
         col.character_maximum_length = Some(-1); // MSSQL MAX
-        let result = TableSchemaMapper::map_schema(&registry, &[col], false).unwrap();
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], false).unwrap();
         assert_eq!(result[0].data_type.base_type, MySqlBaseType::LongBlob);
         assert_eq!(result[0].data_type.length, None);
         assert_eq!(result[0].data_type.to_sql(), "longblob");
@@ -237,9 +239,13 @@ mod tests {
         let mut max_col = make_source("notes", MssqlType::Varchar);
         max_col.character_maximum_length = Some(-1);
 
-        let result =
-            TableSchemaMapper::map_schema(&registry, &[bounded_a, bounded_b, max_col], false)
-                .unwrap();
+        let result = TableSchemaMapper::map_schema(
+            &registry,
+            "Orders",
+            &[bounded_a, bounded_b, max_col],
+            false,
+        )
+        .unwrap();
 
         assert_eq!(result[0].data_type.to_sql(), "varchar(127)");
         assert_eq!(result[1].data_type.to_sql(), "varchar(127)");
@@ -251,7 +257,7 @@ mod tests {
         let registry = default_registry();
         let mut col = make_source("code", MssqlType::Char);
         col.character_maximum_length = Some(-1); // MSSQL MAX
-        let result = TableSchemaMapper::map_schema(&registry, &[col], false);
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], false);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("MAX"));
@@ -262,7 +268,7 @@ mod tests {
     fn test_map_snake_case() {
         let registry = default_registry();
         let col = make_source("UserName", MssqlType::Varchar);
-        let result = TableSchemaMapper::map_schema(&registry, &[col], true).unwrap();
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], true).unwrap();
         assert_eq!(result[0].column_name, "user_name");
     }
 
@@ -274,7 +280,7 @@ mod tests {
             referenced_table: "UserAccounts".to_string(),
             referenced_column: "AccountId".to_string(),
         });
-        let result = TableSchemaMapper::map_schema(&registry, &[col], true).unwrap();
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], true).unwrap();
         if let Some(Constraint::ForeignKey {
             referenced_table,
             referenced_column,
@@ -292,7 +298,7 @@ mod tests {
         let registry = default_registry();
         let mut col = make_source("id", MssqlType::Int);
         col.is_nullable = false;
-        let result = TableSchemaMapper::map_schema(&registry, &[col], false).unwrap();
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], false).unwrap();
         assert!(!result[0].is_nullable);
     }
 
@@ -301,7 +307,7 @@ mod tests {
         let registry = default_registry();
         let mut col = make_source("id", MssqlType::Int);
         col.constraints = Some(Constraint::PrimaryKey);
-        let result = TableSchemaMapper::map_schema(&registry, &[col], false).unwrap();
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], false).unwrap();
         assert_eq!(result[0].constraints, Some(Constraint::PrimaryKey));
     }
 
@@ -310,7 +316,7 @@ mod tests {
         let registry = default_registry();
         let mut col = make_source("data", MssqlType::Varchar);
         col.character_maximum_length = Some(70000);
-        let result = TableSchemaMapper::map_schema(&registry, &[col], false);
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], false);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("exceeds"));
     }
@@ -321,8 +327,58 @@ mod tests {
         let mut col = make_source("val", MssqlType::Decimal);
         col.numeric_precision = Some(10);
         col.numeric_scale = Some(300); // exceeds u8 range
-        let result = TableSchemaMapper::map_schema(&registry, &[col], false).unwrap();
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], false).unwrap();
         // Falls back to default scale since 300 doesn't fit in u8
         assert_eq!(result[0].data_type.scale, Some(2)); // decimal default
+    }
+
+    #[test]
+    fn test_map_column_override_applies_to_single_column() {
+        // A column override affects exactly the named column of the named
+        // table; sibling columns of the same type keep the default mapping.
+        use crate::mappings::UserOverrides;
+        let toml: toml::Value = r#"
+        [mappings.columns]
+        "Orders.ID" = "int unsigned"
+        "#
+        .parse()
+        .unwrap();
+        let overrides = UserOverrides::from_toml(toml).unwrap();
+        let registry = TypeRegistry::with_defaults().with_user_overrides(&overrides);
+
+        let id = make_source("ID", MssqlType::Int);
+        let qty = make_source("Quantity", MssqlType::Int);
+
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[id, qty], false).unwrap();
+        assert_eq!(result[0].data_type.to_sql(), "int unsigned");
+        assert_eq!(result[1].data_type.to_sql(), "int");
+
+        // Same columns in a different table are untouched
+        let id2 = make_source("ID", MssqlType::Int);
+        let result = TableSchemaMapper::map_schema(&registry, "Customers", &[id2], false).unwrap();
+        assert_eq!(result[0].data_type.to_sql(), "int");
+    }
+
+    #[test]
+    fn test_map_column_override_matches_source_names_with_snake_case() {
+        // Overrides are keyed by SOURCE names even when snake_case output
+        // formatting is enabled.
+        use crate::mappings::UserOverrides;
+        let toml: toml::Value = r#"
+        [mappings.columns]
+        "OrderItems.LineTotal" = "decimal(19, 4) unsigned"
+        "#
+        .parse()
+        .unwrap();
+        let overrides = UserOverrides::from_toml(toml).unwrap();
+        let registry = TypeRegistry::with_defaults().with_user_overrides(&overrides);
+
+        let mut col = make_source("LineTotal", MssqlType::Money);
+        col.numeric_precision = Some(19);
+        col.numeric_scale = Some(4);
+
+        let result = TableSchemaMapper::map_schema(&registry, "OrderItems", &[col], true).unwrap();
+        assert_eq!(result[0].column_name, "line_total");
+        assert_eq!(result[0].data_type.to_sql(), "decimal(19, 4) unsigned");
     }
 }
