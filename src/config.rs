@@ -117,8 +117,14 @@ fn parse_database_config(config: Value, default_port: u16) -> Result<DatabaseCon
 fn parse_settings_config(config: Value) -> Result<SettingsConfig> {
     let max_packet_bytes = config
         .get("max_packet_bytes")
-        .and_then(|v| v.as_integer().map(|v| v as usize))
+        .and_then(|v| v.as_integer())
         .ok_or_else(|| anyhow!("Missing or invalid max send packet value"))?;
+    // A plain `as usize` cast would wrap negatives into huge values and
+    // disable batch flushing entirely.
+    let max_packet_bytes = usize::try_from(max_packet_bytes)
+        .ok()
+        .filter(|v| *v > 0)
+        .ok_or_else(|| anyhow!("max_packet_bytes must be a positive integer"))?;
 
     let collation = config
         .get("collation")
@@ -390,6 +396,38 @@ mod tests {
         let result = parse_settings_config(toml.get("settings").unwrap().clone());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("max send packet"));
+    }
+
+    #[test]
+    fn test_negative_max_packet_bytes_errors() {
+        let toml: Value = r#"
+        [settings]
+        max_packet_bytes = -1
+        collation = "Latin1_General_CI_AS"
+        whitelisted_tables = []
+        "#
+        .parse()
+        .unwrap();
+
+        let result = parse_settings_config(toml.get("settings").unwrap().clone());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("positive"));
+    }
+
+    #[test]
+    fn test_zero_max_packet_bytes_errors() {
+        let toml: Value = r#"
+        [settings]
+        max_packet_bytes = 0
+        collation = "Latin1_General_CI_AS"
+        whitelisted_tables = []
+        "#
+        .parse()
+        .unwrap();
+
+        let result = parse_settings_config(toml.get("settings").unwrap().clone());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("positive"));
     }
 
     #[test]
