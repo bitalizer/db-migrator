@@ -162,7 +162,7 @@ All 29 MSSQL types are mapped by default. No configuration required.
 | `datetimeoffset` | `datetime` | Offset stripped |
 | `time` | `time` | |
 | `uniqueidentifier` | `char(36)` | UUID as string |
-| `timestamp` | `bigint` | Row version |
+| `timestamp` | `bigint unsigned` | Row version counter, not a time value |
 | `xml` | `longtext` | |
 
 </details>
