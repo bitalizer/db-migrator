@@ -76,7 +76,12 @@ impl TypeRegistry {
             Self::simple(MySqlBaseType::DateTime),
         );
         defaults.insert(MssqlType::Time, Self::simple(MySqlBaseType::Time));
-        defaults.insert(MssqlType::Timestamp, Self::simple(MySqlBaseType::Timestamp));
+        // timestamp/rowversion is a binary modification counter, not a time value;
+        // bigint unsigned preserves the value and its ordering (#31)
+        defaults.insert(
+            MssqlType::RowVersion,
+            Self::simple_unsigned(MySqlBaseType::BigInt),
+        );
 
         // Special types
         defaults.insert(
@@ -146,6 +151,13 @@ impl TypeRegistry {
         }
     }
 
+    fn simple_unsigned(mysql_type: MySqlBaseType) -> TypeMappingEntry {
+        TypeMappingEntry {
+            unsigned: true,
+            ..Self::simple(mysql_type)
+        }
+    }
+
     fn numeric(mysql_type: MySqlBaseType, precision: u8, scale: u8) -> TypeMappingEntry {
         TypeMappingEntry {
             mysql_type,
@@ -210,7 +222,7 @@ mod tests {
             MssqlType::DateTimeOffset,
             MssqlType::Time,
             MssqlType::UniqueIdentifier,
-            MssqlType::Timestamp,
+            MssqlType::RowVersion,
             MssqlType::Xml,
         ];
         for t in all_types {
@@ -272,6 +284,19 @@ mod tests {
         let registry = TypeRegistry::with_defaults();
         let m = registry.get(MssqlType::Image);
         assert_eq!(m.mysql_type, MySqlBaseType::LongBlob);
+    }
+
+    #[test]
+    fn test_rowversion_is_bigint_unsigned() {
+        // MSSQL timestamp/rowversion is a binary row-modification counter,
+        // not a time value. It must never map to MySQL's datetime-like
+        // timestamp type (#31).
+        let registry = TypeRegistry::with_defaults();
+        let m = registry.get(MssqlType::RowVersion);
+        assert_eq!(m.mysql_type, MySqlBaseType::BigInt);
+        assert!(m.unsigned);
+        assert!(!m.carry_length);
+        assert!(!m.carry_precision);
     }
 
     #[test]

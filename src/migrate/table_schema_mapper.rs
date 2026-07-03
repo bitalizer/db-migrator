@@ -333,6 +333,14 @@ mod tests {
     }
 
     #[test]
+    fn test_map_rowversion_to_sql_is_bigint_unsigned() {
+        let registry = default_registry();
+        let col = make_source("RowVer", MssqlType::RowVersion);
+        let result = TableSchemaMapper::map_schema(&registry, "Orders", &[col], false).unwrap();
+        assert_eq!(result[0].data_type.to_sql(), "bigint unsigned");
+    }
+
+    #[test]
     fn test_map_column_override_applies_to_single_column() {
         // A column override affects exactly the named column of the named
         // table; sibling columns of the same type keep the default mapping.

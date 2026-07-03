@@ -29,7 +29,10 @@ pub enum MssqlType {
     DateTimeOffset,
     Time,
     UniqueIdentifier,
-    Timestamp,
+    /// MSSQL `timestamp` is a deprecated alias of `rowversion`: an 8-byte
+    /// row-modification counter with no time information. Metadata still
+    /// reports it as "timestamp".
+    RowVersion,
     Xml,
 }
 
@@ -63,7 +66,7 @@ impl MssqlType {
             "datetimeoffset" => Some(Self::DateTimeOffset),
             "time" => Some(Self::Time),
             "uniqueidentifier" => Some(Self::UniqueIdentifier),
-            "timestamp" => Some(Self::Timestamp),
+            "timestamp" => Some(Self::RowVersion),
             "xml" => Some(Self::Xml),
             _ => None,
         }
@@ -98,7 +101,7 @@ impl MssqlType {
             Self::DateTimeOffset => "datetimeoffset",
             Self::Time => "time",
             Self::UniqueIdentifier => "uniqueidentifier",
-            Self::Timestamp => "timestamp",
+            Self::RowVersion => "timestamp",
             Self::Xml => "xml",
         }
     }
@@ -163,7 +166,7 @@ mod tests {
             MssqlType::DateTimeOffset,
             MssqlType::Time,
             MssqlType::UniqueIdentifier,
-            MssqlType::Timestamp,
+            MssqlType::RowVersion,
             MssqlType::Xml,
         ];
 
