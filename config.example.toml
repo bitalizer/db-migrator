@@ -14,5 +14,4 @@ database = "output"
 
 [settings]
 max_packet_bytes = 1048576
-collation = "Latin1_General_CI_AS"
 whitelisted_tables = ["table1", "table2"]

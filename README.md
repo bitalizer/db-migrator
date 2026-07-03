@@ -91,9 +91,14 @@ database = "target_db"
 
 [settings]
 max_packet_bytes = 1048576
-collation = "Latin1_General_CI_AS"
 whitelisted_tables = ["Users", "Orders", "Products"]
 ```
+
+> **Character sets:** text is decoded from SQL Server to UTF-8 during extraction, and created
+> tables inherit the target database's default charset. Create the target database with
+> `utf8mb4` (`CREATE DATABASE output CHARACTER SET utf8mb4`) so all characters survive.
+> Collation semantics are not translated: data from a case-sensitive SQL Server column can
+> collide on MySQL's default case-insensitive unique indexes.
 
 
 ## Usage

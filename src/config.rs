@@ -20,8 +20,6 @@ pub struct DatabaseConfig {
 #[derive(Debug, Clone)]
 pub struct SettingsConfig {
     pub max_packet_bytes: usize,
-    #[allow(dead_code)]
-    pub collation: String,
     pub whitelisted_tables: Vec<String>,
 }
 
@@ -171,11 +169,12 @@ fn parse_settings_config(config: Value) -> Result<SettingsConfig> {
         .filter(|v| *v > 0)
         .ok_or_else(|| anyhow!("max_packet_bytes must be a positive integer"))?;
 
-    let collation = config
-        .get("collation")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| anyhow!("Missing or invalid collation"))?
-        .to_string();
+    // Accepted for backward compatibility; it never had any effect.
+    if config.get("collation").is_some() {
+        log::warn!(
+            "'collation' in [settings] is deprecated and has no effect; remove it from config.toml"
+        );
+    }
 
     let whitelisted_tables = config
         .get("whitelisted_tables")
@@ -195,7 +194,6 @@ fn parse_settings_config(config: Value) -> Result<SettingsConfig> {
 
     Ok(SettingsConfig {
         max_packet_bytes,
-        collation,
         whitelisted_tables,
     })
 }
@@ -240,7 +238,6 @@ mod tests {
         assert_eq!(config.mysql_database().port, 3306);
         assert_eq!(config.mysql_database().database, "target_db");
         assert_eq!(config.settings().max_packet_bytes, 1048576);
-        assert_eq!(config.settings().collation, "Latin1_General_CI_AS");
         assert_eq!(
             config.settings().whitelisted_tables,
             vec!["users", "orders"]
@@ -485,6 +482,35 @@ mod tests {
         let result = parse_settings_config(toml.get("settings").unwrap().clone());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("positive"));
+    }
+
+    #[test]
+    fn test_settings_without_collation_parses() {
+        let toml: Value = r#"
+        [settings]
+        max_packet_bytes = 1048576
+        whitelisted_tables = ["users"]
+        "#
+        .parse()
+        .unwrap();
+
+        let settings = parse_settings_config(toml.get("settings").unwrap().clone()).unwrap();
+        assert_eq!(settings.max_packet_bytes, 1048576);
+    }
+
+    #[test]
+    fn test_settings_with_collation_still_accepted() {
+        // Deprecated key is tolerated so existing configs keep loading
+        let toml: Value = r#"
+        [settings]
+        max_packet_bytes = 1048576
+        collation = "Latin1_General_CI_AS"
+        whitelisted_tables = []
+        "#
+        .parse()
+        .unwrap();
+
+        assert!(parse_settings_config(toml.get("settings").unwrap().clone()).is_ok());
     }
 
     #[test]
