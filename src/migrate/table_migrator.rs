@@ -109,6 +109,7 @@ impl<E: Extractor, I: Inserter> TableMigrator<E, I> {
             table_name: output_table_name,
             schema: mapped_schema,
             created: !table_exists,
+            rows_migrated: migrated_count,
         })
     }
 
