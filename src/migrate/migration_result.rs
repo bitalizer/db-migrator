@@ -5,4 +5,5 @@ pub struct MigrationResult {
     pub table_name: String,
     pub schema: Vec<TargetColumn>,
     pub created: bool,
+    pub rows_migrated: usize,
 }

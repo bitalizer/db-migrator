@@ -68,6 +68,7 @@ impl<E: Extractor, I: Inserter> DatabaseMigrator<E, I> {
             .await?;
 
         let successful_results = self.run_migration(&tables).await?;
+        let total_rows: usize = successful_results.iter().map(|r| r.rows_migrated).sum();
 
         if self.options.constraints {
             let constraints_creator = ConstraintsCreator::new(self.inserter.clone());
@@ -79,7 +80,8 @@ impl<E: Extractor, I: Inserter> DatabaseMigrator<E, I> {
         let end_time = Instant::now();
 
         info!(
-            "Migration finished, total time took: {}s",
+            "Migration finished, total rows: {}, total time took: {}s",
+            total_rows,
             end_time.saturating_duration_since(start_time).as_secs_f32()
         );
 

@@ -516,6 +516,7 @@ mod mock_tests {
         let result = tm.migrate_table("Users").await;
 
         assert!(result.is_ok());
+        assert_eq!(result.unwrap().rows_migrated, 3);
         let queries = inserter.executed_queries.lock().unwrap();
         assert_eq!(queries.len(), 1);
         assert!(queries[0].contains("INSERT INTO"));

@@ -27,7 +27,7 @@ Migrating table: user_accounts
 Table user_accounts migrated, rows: 12840, took: 1.23s
 Migrating table: orders
 Table orders migrated, rows: 58201, took: 3.47s
-Migration finished, total time took: 4.82s
+Migration finished, total rows: 71041, total time took: 4.82s
 ```
 
 ## Features
