@@ -7,6 +7,8 @@ use std::collections::HashMap;
 pub struct TypeRegistry {
     defaults: HashMap<MssqlType, TypeMappingEntry>,
     overrides: HashMap<MssqlType, TypeMappingEntry>,
+    /// Column-scoped overrides keyed by lowercased "table.column" source names.
+    column_overrides: HashMap<String, TypeMappingEntry>,
 }
 
 impl TypeRegistry {
@@ -86,6 +88,7 @@ impl TypeRegistry {
         TypeRegistry {
             defaults,
             overrides: HashMap::new(),
+            column_overrides: HashMap::new(),
         }
     }
 
@@ -96,13 +99,36 @@ impl TypeRegistry {
             .expect("all MssqlType variants must have a default mapping")
     }
 
+    /// Resolve the mapping for a specific column. Precedence:
+    /// column override > type override > built-in default.
+    /// Table/column names are matched case-insensitively against source names.
+    pub fn resolve(
+        &self,
+        table_name: &str,
+        column_name: &str,
+        mssql_type: MssqlType,
+    ) -> &TypeMappingEntry {
+        let key = format!("{}.{}", table_name, column_name).to_lowercase();
+        self.column_overrides
+            .get(&key)
+            .unwrap_or_else(|| self.get(mssql_type))
+    }
+
     pub fn set_override(&mut self, mssql_type: MssqlType, entry: TypeMappingEntry) {
         self.overrides.insert(mssql_type, entry);
+    }
+
+    pub fn set_column_override(&mut self, table_column: &str, entry: TypeMappingEntry) {
+        self.column_overrides
+            .insert(table_column.to_lowercase(), entry);
     }
 
     pub fn with_user_overrides(mut self, overrides: &UserOverrides) -> Self {
         for (mssql_type, entry) in overrides.iter() {
             self.set_override(*mssql_type, entry.clone());
+        }
+        for (table_column, entry) in overrides.columns_iter() {
+            self.set_column_override(table_column, entry.clone());
         }
         self
     }
@@ -295,5 +321,60 @@ mod tests {
         assert_eq!(m.default_length, Some(500));
 
         assert_eq!(registry.get(MssqlType::Int).mysql_type, MySqlBaseType::Int);
+    }
+
+    #[test]
+    fn test_resolve_column_override_beats_type_override() {
+        let toml_val: toml::Value = r#"
+        [mappings]
+        int = "bigint"
+
+        [mappings.columns]
+        "Orders.ID" = "int unsigned"
+        "#
+        .parse()
+        .unwrap();
+
+        let overrides = crate::mappings::UserOverrides::from_toml(toml_val).unwrap();
+        let registry = TypeRegistry::with_defaults().with_user_overrides(&overrides);
+
+        // Column override wins for the matching column
+        let m = registry.resolve("Orders", "ID", MssqlType::Int);
+        assert_eq!(m.mysql_type, MySqlBaseType::Int);
+        assert!(m.unsigned);
+
+        // Other columns of the same type fall back to the type override
+        let m = registry.resolve("Orders", "ParentID", MssqlType::Int);
+        assert_eq!(m.mysql_type, MySqlBaseType::BigInt);
+        assert!(!m.unsigned);
+
+        // Other tables unaffected by the column override
+        let m = registry.resolve("Accounts", "ID", MssqlType::Int);
+        assert_eq!(m.mysql_type, MySqlBaseType::BigInt);
+        assert!(!m.unsigned);
+    }
+
+    #[test]
+    fn test_resolve_falls_back_to_default_without_overrides() {
+        let registry = TypeRegistry::with_defaults();
+        let m = registry.resolve("AnyTable", "AnyColumn", MssqlType::Int);
+        assert_eq!(m.mysql_type, MySqlBaseType::Int);
+        assert!(!m.unsigned);
+    }
+
+    #[test]
+    fn test_resolve_case_insensitive_match() {
+        let toml_val: toml::Value = r#"
+        [mappings.columns]
+        "Orders.ID" = "int unsigned"
+        "#
+        .parse()
+        .unwrap();
+
+        let overrides = crate::mappings::UserOverrides::from_toml(toml_val).unwrap();
+        let registry = TypeRegistry::with_defaults().with_user_overrides(&overrides);
+
+        assert!(registry.resolve("orders", "id", MssqlType::Int).unsigned);
+        assert!(registry.resolve("ORDERS", "ID", MssqlType::Int).unsigned);
     }
 }

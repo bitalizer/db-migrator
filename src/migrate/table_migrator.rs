@@ -59,6 +59,7 @@ impl<E: Extractor, I: Inserter> TableMigrator<E, I> {
 
         let mapped_schema = TableSchemaMapper::map_schema(
             &self.registry,
+            table_name,
             &table_schema,
             self.options.format_snake_case,
         )
