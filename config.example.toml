@@ -1,13 +1,13 @@
 [mssql_database]
-host = "localhost"
-port = 1433
+host = "localhost"   # optional, defaults to "localhost"
+port = 1433          # optional, defaults to 1433
 username = "db_user"
 password = "db_pass"
 database = "input"
 
 [mysql_database]
-host = "localhost"
-port = 3306
+host = "localhost"   # optional, defaults to "localhost"
+port = 3306          # optional, defaults to 3306
 username = "db_user"
 password = "db_pass"
 database = "output"

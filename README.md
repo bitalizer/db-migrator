@@ -76,14 +76,14 @@ Create `config.toml` from the example:
 
 ```toml
 [mssql_database]
-host = "localhost"
+host = "localhost"   # optional, defaults shown
 port = 1433
 username = "db_user"
 password = "db_pass"
 database = "source_db"
 
 [mysql_database]
-host = "localhost"
+host = "localhost"   # optional, defaults shown
 port = 3306
 username = "db_user"
 password = "db_pass"

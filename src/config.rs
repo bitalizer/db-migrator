@@ -32,12 +32,14 @@ impl Config {
                 .get("mssql_database")
                 .ok_or(anyhow!("Missing or invalid MSSQL database settings"))?
                 .clone(),
+            1433,
         )?;
         let mysql_database = parse_database_config(
             config
                 .get("mysql_database")
                 .ok_or(anyhow!("Missing or invalid MySQL database settings"))?
                 .clone(),
+            3306,
         )?;
         let settings = parse_settings_config(
             config
@@ -66,18 +68,24 @@ impl Config {
     }
 }
 
-fn parse_database_config(config: Value) -> Result<DatabaseConfig> {
-    let host = config
-        .get("host")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| anyhow!("Missing or invalid host"))?
-        .to_string();
+fn parse_database_config(config: Value, default_port: u16) -> Result<DatabaseConfig> {
+    // host and port are optional: missing values fall back to defaults, but
+    // present values of the wrong type are still rejected.
+    let host = match config.get("host") {
+        None => "localhost".to_string(),
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| anyhow!("Invalid host"))?
+            .to_string(),
+    };
 
-    let port = config
-        .get("port")
-        .and_then(|value| value.as_integer())
-        .ok_or_else(|| anyhow!("Missing or invalid port"))?
-        .try_into()?;
+    let port = match config.get("port") {
+        None => default_port,
+        Some(value) => value
+            .as_integer()
+            .ok_or_else(|| anyhow!("Invalid port"))?
+            .try_into()?,
+    };
 
     let username = config
         .get("username")
@@ -252,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn test_missing_host_in_database() {
+    fn test_missing_host_defaults_to_localhost() {
         let toml: Value = r#"
         [mssql_database]
         port = 1433
@@ -263,16 +271,17 @@ mod tests {
         .parse()
         .unwrap();
 
-        let result = parse_database_config(toml.get("mssql_database").unwrap().clone());
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("host"));
+        let config =
+            parse_database_config(toml.get("mssql_database").unwrap().clone(), 1433).unwrap();
+        assert_eq!(config.host, "localhost");
+        assert_eq!(config.port, 1433);
     }
 
     #[test]
-    fn test_missing_port_in_database() {
+    fn test_missing_port_uses_engine_default() {
         let toml: Value = r#"
         [db]
-        host = "localhost"
+        host = "10.0.0.5"
         username = "sa"
         password = "pass"
         database = "db"
@@ -280,9 +289,92 @@ mod tests {
         .parse()
         .unwrap();
 
-        let result = parse_database_config(toml.get("db").unwrap().clone());
+        let config = parse_database_config(toml.get("db").unwrap().clone(), 1433).unwrap();
+        assert_eq!(config.host, "10.0.0.5");
+        assert_eq!(config.port, 1433);
+    }
+
+    #[test]
+    fn test_omitted_host_and_port_in_both_sections() {
+        let config = Config::from_toml(
+            r#"
+            [mssql_database]
+            username = "sa"
+            password = "pass"
+            database = "db"
+
+            [mysql_database]
+            username = "root"
+            password = "pass"
+            database = "db"
+
+            [settings]
+            max_packet_bytes = 1048576
+            collation = "Latin1_General_CI_AS"
+            whitelisted_tables = []
+            "#
+            .parse()
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(config.mssql_database().host, "localhost");
+        assert_eq!(config.mssql_database().port, 1433);
+        assert_eq!(config.mysql_database().host, "localhost");
+        assert_eq!(config.mysql_database().port, 3306);
+    }
+
+    #[test]
+    fn test_invalid_host_still_errors() {
+        // Present but wrong type must error, not silently default
+        let toml: Value = r#"
+        [db]
+        host = 123
+        username = "sa"
+        password = "pass"
+        database = "db"
+        "#
+        .parse()
+        .unwrap();
+
+        let result = parse_database_config(toml.get("db").unwrap().clone(), 1433);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("host"));
+    }
+
+    #[test]
+    fn test_invalid_port_still_errors() {
+        let toml: Value = r#"
+        [db]
+        host = "localhost"
+        port = "not-a-number"
+        username = "sa"
+        password = "pass"
+        database = "db"
+        "#
+        .parse()
+        .unwrap();
+
+        let result = parse_database_config(toml.get("db").unwrap().clone(), 1433);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("port"));
+    }
+
+    #[test]
+    fn test_out_of_range_port_errors() {
+        let toml: Value = r#"
+        [db]
+        host = "localhost"
+        port = 70000
+        username = "sa"
+        password = "pass"
+        database = "db"
+        "#
+        .parse()
+        .unwrap();
+
+        let result = parse_database_config(toml.get("db").unwrap().clone(), 1433);
+        assert!(result.is_err());
     }
 
     #[test]
